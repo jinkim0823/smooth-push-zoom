@@ -1,0 +1,4 @@
+dist/
+schemas/gschemas.compiled
+*.log
+.DS_Store

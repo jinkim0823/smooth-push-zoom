@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.smooth-push-zoom" path="/org/gnome/shell/extensions/smooth-push-zoom/">
+    <key name="low-latency-pointer" type="b">
+      <default>true</default>
+      <summary>Responsive magnified pointer</summary>
+      <description>Refresh magnifier tracking before rendered frames on older GNOME. GNOME 51's native event-driven tracking takes precedence; this setting has no effect there.</description>
+    </key>
+    <key name="modifier-key" type="s">
+      <choices>
+        <choice value="super-alt"/>
+        <choice value="ctrl-super"/>
+        <choice value="super"/>
+        <choice value="alt"/>
+      </choices>
+      <default>'super-alt'</default>
+      <summary>Modifier shortcut</summary>
+      <description>Modifier combination held while scrolling.</description>
+    </key>
+    <key name="zoom-sensitivity" type="d">
+      <range min="0.01" max="0.50"/>
+      <default>0.12</default>
+      <summary>Zoom sensitivity</summary>
+      <description>Exponential zoom amount per scroll unit.</description>
+    </key>
+    <key name="smoothing-ms" type="d">
+      <range min="0.0" max="300.0"/>
+      <default>90.0</default>
+      <summary>Smoothing time</summary>
+      <description>Time in milliseconds to cover about 95% of the requested change. Zero disables interpolation.</description>
+    </key>
+    <key name="max-zoom" type="d">
+      <range min="1.25" max="20.0"/>
+      <default>12.0</default>
+      <summary>Maximum zoom</summary>
+      <description>Maximum magnification factor.</description>
+    </key>
+  </schema>
+</schemalist>

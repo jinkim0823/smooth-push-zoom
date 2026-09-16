@@ -1,0 +1,10 @@
+{
+  "name": "Smooth Push Zoom",
+  "description": "Smooth modifier-scroll desktop zoom, anchored at the cursor while preserving GNOME’s mouse tracking, including Pushes Contents Around.",
+  "uuid": "smooth-push-zoom@jinkim0823.github.io",
+  "shell-version": [
+    "46"
+  ],
+  "settings-schema": "org.gnome.shell.extensions.smooth-push-zoom",
+  "url": "https://github.com/jinkim0823/smooth-push-zoom"
+}

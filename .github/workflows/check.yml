@@ -1,0 +1,24 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y gjs gnome-shell libglib2.0-bin unzip
+      - name: Syntax, behavior, installer and package checks
+        run: ./scripts/check.sh
+      - name: Check audited GNOME 51 source contracts
+        run: |
+          curl --fail --location --max-time 30 https://raw.githubusercontent.com/GNOME/gnome-shell/51.0/js/ui/magnifier.js --output "$RUNNER_TEMP/magnifier-51.js"
+          gjs tests/source-api.js "$RUNNER_TEMP/magnifier-51.js"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: extension-packages
+          path: dist/
