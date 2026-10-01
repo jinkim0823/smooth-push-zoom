@@ -22,9 +22,10 @@ benchmark.
 - External GNOME zoom changes take precedence over an ongoing animation.
 - Adjustable shortcut, speed, smoothing, maximum zoom and pointer refresh.
 
-The project is preparing its first release. The standard package targets
-**GNOME Shell 46**. Tests use a separate GNOME 46 Wayland session; this is not a
-claim that every hardware or display configuration has been validated.
+The current release is [0.1.0](https://github.com/jinkim0823/smooth-push-zoom/releases/tag/v0.1.0).
+The standard package targets **GNOME Shell 46**. Tests use a separate GNOME 46
+Wayland session; this is not a claim that every hardware or display
+configuration has been validated.
 
 ## Install
 

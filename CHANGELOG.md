@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-10-01
+
+First public release. Supports GNOME Shell 46 only.
 
 - Correct asymmetric full-screen mouse Push borders with equal, zoom-independent margins.
 - Add a 0–200 logical-pixel edge margin and a switch to restore native Push.

@@ -1,9 +1,10 @@
 # Releasing
 
-The existing `v0.1.0-rc.1` tag identifies the earlier candidate, before balanced
-Push borders and Camera preferences. Keep that tag unchanged. For the first
-public release including these changes, create a new tag such as `v0.1.0` on the
-reviewed commit. Standard metadata supports GNOME 46 only.
+`v0.1.0-rc.1` is the earlier candidate and `v0.1.0` is the first public release,
+which adds balanced Push borders and Camera preferences. Never move or reuse
+published tags; tag each new release on its reviewed commit and update
+`CHANGELOG.md` and `docs/release-notes.md` in the same commit.
+Standard metadata supports GNOME 46 only.
 
 1. Run `./scripts/check.sh` and the GNOME 46 integration suite.
 2. Verify the release diff, license notices, README images and known limitations.
