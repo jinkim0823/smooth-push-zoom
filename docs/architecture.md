@@ -34,6 +34,8 @@ thresholds subtract the unzoomed cursor sprite width/height; left/top do not.
 Consequently this directional inset grows visually with magnification and varies
 with cursor theme. `_changeROI()` separately clamps to the desktop when
 `scroll-at-edges` is false. These are distinct boundaries.
+Reported upstream as
+[GNOME/gnome-shell#9451](https://gitlab.gnome.org/GNOME/gnome-shell/-/work_items/9451).
 
 During enable, `InjectionManager` wraps `_centerFromMousePosition()` on the
 existing zoom-region prototypes. Only this magnifier’s full-screen mouse Push
