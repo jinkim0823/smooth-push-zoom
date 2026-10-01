@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnome.shell.extensions.smooth-push-zoom" path="/org/gnome/shell/extensions/smooth-push-zoom/">
+    <key name="balanced-push" type="b">
+      <default>true</default>
+      <summary>Equal Push borders</summary>
+      <description>Use equal pointer-hotspot insets on all four sides in full-screen Push mode. Other tracking modes and lenses retain GNOME behavior.</description>
+    </key>
+    <key name="push-margin" type="d">
+      <range min="0.0" max="200.0"/>
+      <default>24.0</default>
+      <summary>Push edge margin</summary>
+      <description>Distance from each visible edge in logical pixels at which panning starts. Independent of zoom. Zero requires reaching the edge; large values are capped at 45 percent of each viewport dimension.</description>
+    </key>
     <key name="low-latency-pointer" type="b">
       <default>true</default>
       <summary>Responsive magnified pointer</summary>

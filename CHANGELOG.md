@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Correct asymmetric full-screen mouse Push borders with equal, zoom-independent margins.
+- Add a 0–200 logical-pixel edge margin and a switch to restore native Push.
+- Add a Camera page for shared GNOME mouse, focus, caret and desktop-boundary settings.
+- Preserve native lens and focus/caret Push behavior and restore the mouse method on disable.
+
 ## 0.1.0-rc.1 — release candidate
 
 First public release candidate, based on local development builds from

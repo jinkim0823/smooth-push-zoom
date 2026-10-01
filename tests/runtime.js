@@ -47,7 +47,7 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         }
     }
     const settings = new Settings({'modifier-key': 'super-alt', 'zoom-sensitivity': .12,
-        'smoothing-ms': 90, 'max-zoom': 12, 'low-latency-pointer': true});
+        'smoothing-ms': 90, 'max-zoom': 12, 'low-latency-pointer': true, 'balanced-push': true, 'push-margin': 24});
     const magSettings = new Settings({'mag-factor': factor});
     const appSettings = new Settings({'screen-magnifier-enabled': active});
     const pointer = [300, 240, 0];
@@ -63,7 +63,11 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
             if (params.xCenter !== undefined) this.cx = params.xCenter;
             if (params.yCenter !== undefined) this.cy = params.yCenter;
         }};
+    const nativeCenter = () => ['native'];
+    Object.setPrototypeOf(region, {_centerFromMousePosition: nativeCenter});
     const magnifier = new Emitter();
+    region._magnifier = magnifier;
+    region._mouseTrackingMode = 1;
     Object.assign(magnifier, {active, regions: [region],
         isActive() { return this.active; },
         setActive(value) {
@@ -100,10 +104,18 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
     }};
     const GLib = {get_monotonic_time() { return now; }};
     class Extension { getSettings() { return settings; } }
-    const Klass = new Function('Clutter', 'Gio', 'GLib', 'Main', 'Extension', 'global', 'console', source);
+    class InjectionManager {
+        constructor() { this.saved = []; }
+        overrideMethod(proto, name, create) {
+            this.saved.push([proto, name, proto[name]]); proto[name] = create(proto[name]);
+        }
+        clear() { for (const [proto, name, original] of this.saved) proto[name] = original; this.saved = []; }
+    }
+    const GDesktopEnums = {MagnifierMouseTrackingMode: {PUSH: 1}};
+    const Klass = new Function('Clutter', 'Gio', 'GLib', 'Main', 'Extension', 'global', 'console', 'InjectionManager', 'GDesktopEnums', source);
     const extension = new (Klass(Clutter, Gio, GLib, {magnifier}, Extension,
         {stage, get_pointer: () => pointer.map(Math.trunc), screen_width: 1280, screen_height: 720},
-        {error(message) { errors.push(message); }}))();
+        {error(message) { errors.push(message); }}, InjectionManager, GDesktopEnums))();
     extension.enable();
     function flush() { while (queue.length) queue.shift()(); }
     function tick(ms = 16) {
@@ -358,5 +370,57 @@ test('partial native API presence retains the 46 fallback', () => {
     f.magnifier._getPointerPosition = () => f.pointer;
     f.extension.enable();
     assert(!f.extension._nativePointerTracking && f.stage.handlers.size === 2);
+});
+
+
+test('balanced push has equal visible margins at 2x and 8x', () => {
+    for (const factor of [2, 8]) {
+        const f = fixture({active: true, factor});
+        const [x, y, w, h] = f.region.getROI();
+        for (const [px, py, dx, dy] of [
+            [x + 23 / factor, 360, -1 / factor, 0],
+            [x + w - 23 / factor, 360, 1 / factor, 0],
+            [640, y + 23 / factor, 0, -1 / factor],
+            [640, y + h - 23 / factor, 0, 1 / factor],
+        ]) {
+            Object.assign(f.magnifier, {xMouse: px, yMouse: py});
+            const center = f.region._centerFromMousePosition();
+            near(center[0], 640 + dx); near(center[1], 360 + dy);
+        }
+        f.extension.disable();
+    }
+});
+test('push dead zone, zero margin and oversized margin stay well defined', () => {
+    const f = fixture({active: true, factor: 20});
+    Object.assign(f.magnifier, {xMouse: 640, yMouse: 360});
+    f.settings.set('push-margin', 200);
+    near(f.region._centerFromMousePosition()[0], 640);
+    near(f.region._centerFromMousePosition()[1], 360);
+    f.settings.set('push-margin', 0);
+    const [x, y] = f.region.getROI();
+    Object.assign(f.magnifier, {xMouse: x, yMouse: y});
+    near(f.region._centerFromMousePosition()[0], 640);
+    near(f.region._centerFromMousePosition()[1], 360);
+    f.magnifier.xMouse -= .5;
+    near(f.region._centerFromMousePosition()[0], 639.5);
+});
+test('native tracking remains for other modes, lenses, switch off and failure', () => {
+    const f = fixture({active: true});
+    f.region._mouseTrackingMode = 2;
+    assert(f.region._centerFromMousePosition()[0] === 'native');
+    f.region._mouseTrackingMode = 1; f.region.fullScreen = false;
+    assert(f.region._centerFromMousePosition()[0] === 'native');
+    f.region.fullScreen = true; f.settings.set('balanced-push', false);
+    assert(f.region._centerFromMousePosition()[0] === 'native');
+    f.settings.set('balanced-push', true); f.extension._failed = true;
+    assert(f.region._centerFromMousePosition()[0] === 'native');
+});
+test('disable restores the native method and re-enable does not stack wrappers', () => {
+    const f = fixture();
+    f.extension.disable();
+    const original = f.region._centerFromMousePosition;
+    assert(original()[0] === 'native');
+    f.extension.enable(); assert(f.region._centerFromMousePosition !== original);
+    f.extension.disable(); assert(f.region._centerFromMousePosition === original);
 });
 print(`${count} runtime regression checks passed (mock GNOME objects).`);

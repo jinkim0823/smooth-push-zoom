@@ -2,10 +2,11 @@
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import GDesktopEnums from 'gi://GDesktopEnums';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const MIN_ZOOM = 1.0;
 const EPSILON = 0.0015;
@@ -34,6 +35,8 @@ export default class SmoothPushZoomExtension extends Extension {
         });
         this._readSettings();
         this._syncFromRuntime();
+        this._injections = new InjectionManager();
+        this._runSafely(() => this._installPushTracking());
 
         this._connect(this._settings, 'changed', (_settings, key) => {
             this._readSettings();
@@ -96,6 +99,8 @@ export default class SmoothPushZoomExtension extends Extension {
         for (const [object, id] of this._connections ?? [])
             object.disconnect(id);
         this._connections = null;
+        this._injections?.clear();
+        this._injections = null;
 
         // Keep the user's current magnification when disabling this input tool.
         // Never commit a stale state after an external change.
@@ -123,6 +128,49 @@ export default class SmoothPushZoomExtension extends Extension {
         this._smoothingMs = this._settings.get_double('smoothing-ms');
         this._maxZoom = this._settings.get_double('max-zoom');
         this._lowLatencyPointer = this._settings.get_boolean('low-latency-pointer');
+        this._balancedPush = this._settings.get_boolean('balanced-push');
+        this._pushMargin = this._settings.get_double('push-margin');
+    }
+
+    _installPushTracking() {
+        // Override only mouse tracking. GNOME's shared _centerFromPointPush()
+        // also serves focus/caret events, which must keep their native policy.
+        const prototypes = new Set(this._magnifier.getZoomRegions()
+            .map(region => Object.getPrototypeOf(region)));
+        const extension = this;
+        for (const prototype of prototypes) {
+            if (typeof prototype._centerFromMousePosition !== 'function')
+                throw new Error('Unsupported GNOME mouse tracking API');
+            this._injections.overrideMethod(prototype, '_centerFromMousePosition',
+                original => function (...args) {
+                    if (extension._balancedPush && !extension._failed &&
+                        this._magnifier === extension._magnifier && this._isFullScreen() &&
+                        this._mouseTrackingMode === GDesktopEnums.MagnifierMouseTrackingMode.PUSH) {
+                        let center;
+                        if (extension._runSafely(() => {
+                            center = extension._balancedPushCenter(this);
+                        }))
+                            return center;
+                    }
+                    return original.apply(this, args);
+                });
+        }
+    }
+
+    _balancedPushCenter(region) {
+        const [x, y, width, height] = region.getROI();
+        const [zx, zy] = region.getMagFactor();
+        // Margin is in visible logical pixels, not source-desktop pixels.
+        // GNOME's native Push subtracts the cursor sprite only at right/bottom;
+        // its apparent inset grows with zoom and differs across cursor themes.
+        // Track the pointer hotspot against four equal insets instead.
+        const mx = Math.min(this._pushMargin / zx, width * 0.45);
+        const my = Math.min(this._pushMargin / zy, height * 0.45);
+        const px = this._magnifier.xMouse;
+        const py = this._magnifier.yMouse;
+        const dx = px - Math.max(x + mx, Math.min(x + width - mx, px));
+        const dy = py - Math.max(y + my, Math.min(y + height - my, py));
+        return [x + width / 2 + dx, y + height / 2 + dy];
     }
 
     _setZoomState(factor) {

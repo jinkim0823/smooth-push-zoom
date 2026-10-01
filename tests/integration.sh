@@ -8,7 +8,15 @@ if [[ -n "${SPZ_DEMO_DIR:-}" ]]; then
 fi
 export SPZ_PREFS_SCRIPT="$ROOT/tests/prefs-window.js"
 TEST_ROOT="$(mktemp -d)"
-trap 'rm -rf -- "$TEST_ROOT"' EXIT
+cleanup() {
+    # The isolated document portal may leave its FUSE mount while shutting down.
+    # Unmount only this test's private runtime path before deleting its files.
+    if mountpoint -q "$TEST_ROOT/run/doc"; then
+        fusermount3 -u "$TEST_ROOT/run/doc"
+    fi
+    rm -rf -- "$TEST_ROOT"
+}
+trap cleanup EXIT
 export XDG_DATA_HOME="$TEST_ROOT/data"
 export XDG_CONFIG_HOME="$TEST_ROOT/config"
 export XDG_CACHE_HOME="$TEST_ROOT/cache"

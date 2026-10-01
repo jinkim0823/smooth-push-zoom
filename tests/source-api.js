@@ -67,3 +67,22 @@ assert(method(upstream, 'startTrackingMouse').includes('position-invalidated'), 
 assert(method(upstream, '_queuePointerPositionUpdate').includes('BEFORE_REDRAW'), 'native scheduling changed');
 assert(method(upstream, 'setMagFactor').includes('animate: true'), 'native easing changed');
 print('PASS: 51 source native tracking and easing contracts');
+
+// The same mouse-only adapter runs on audited GNOME 51 region methods.
+const balanced = new Function(`return (${method(extension, '_balancedPushCenter')});`)();
+for (const factor of [2, 8]) {
+    region._changeROI({xMagFactor: factor, yMagFactor: factor, xCenter: 640, yCenter: 360});
+    const [x, y, w, h] = region.getROI();
+    for (const [px, py, dx, dy] of [[x + 23 / factor, 360, -1 / factor, 0],
+        [x + w - 23 / factor, 360, 1 / factor, 0],
+        [640, y + 23 / factor, 0, -1 / factor], [640, y + h - 23 / factor, 0, 1 / factor]]) {
+        magnifier.xMouse = px; magnifier.yMouse = py;
+        same(balanced.call({_magnifier: magnifier, _pushMargin: 24}, region),
+            [640 + dx, 360 + dy], `51 source: balanced Push ${factor}x ${dx},${dy}`);
+    }
+}
+assert(method(upstream, '_centerFromMousePosition').includes('_centerFromPointPush'),
+    '51 mouse dispatch changed');
+assert(method(upstream, '_centerFromPointPush').includes('widthRoi - cursorWidth'),
+    '51 native cursor-padding behavior changed');
+print('PASS: 51 mouse dispatch and original asymmetric padding contracts');

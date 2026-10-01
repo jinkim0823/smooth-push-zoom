@@ -1,7 +1,7 @@
 # Smooth Push Zoom
 
 Smooth desktop zoom for GNOME: **hold Super + Alt and scroll**.
-Zoom around the cursor, then pan only when you push against the visible edge.
+Zoom around the cursor, with configurable edge panning and GNOME camera tracking.
 
 ![Zoom and edge-panning demo](docs/demo.gif)
 
@@ -15,7 +15,9 @@ benchmark.
 
 - Cursor-anchored full-screen zoom: the content under the cursor stays in place.
 - Smooth, proportional zoom steps for mouse wheels and touchpads.
-- Preserves GNOME's mouse tracking, including **Pushes Contents Around**.
+- Preserves GNOME's selected tracking mode, including **Pushes Contents Around**.
+- Equal, adjustable Push margins on all four edges, independent of zoom level.
+- Camera preferences for native mouse, keyboard focus and text cursor tracking.
 - Zooming out to **1.00× turns Desktop Zoom off**.
 - External GNOME zoom changes take precedence over an ongoing animation.
 - Adjustable shortcut, speed, smoothing, maximum zoom and pointer refresh.
@@ -55,7 +57,8 @@ only one build at a time. The installer does not delete the earlier local build.
 
 ![Settings](docs/preferences.png)
 
-In **Settings → Accessibility → Zoom**, select **Pushes Contents Around**.
+On the extension’s **Camera** page, select **Push at edges** for edge-only panning.
+GNOME Accessibility calls this **Pushes Contents Around**.
 Hold **Super + Alt** and scroll vertically to zoom.
 
 Open extension preferences from the Extensions application or run:
@@ -71,6 +74,38 @@ gnome-extensions prefs smooth-push-zoom@jinkim0823.github.io
 | Smoothing | 90 ms | Time to cover about 95% of a zoom change; 0 is immediate |
 | Maximum zoom | 12× | Upper limit for zoom controlled by this extension |
 | Responsive pointer | On | Additional frame-based tracking on older GNOME |
+| Equal Push borders | On | Full-screen mouse Push uses equal hotspot insets instead of native cursor padding |
+| Edge margin | 24 px | Visible logical-pixel inset on every edge; 0–200, independent of zoom |
+
+### Camera behavior
+
+![Camera settings](docs/preferences-camera.png)
+
+Mouse, keyboard focus, and text cursor tracking each offer GNOME’s **Push**,
+**Proportional**, **Centered**, and **No tracking** choices. These controls edit
+the shared GNOME Accessibility settings directly. Opening preferences changes
+nothing; choices you make persist after disabling the extension. No tracking
+disables that source of panning, not the other two sources or cursor-anchored zoom.
+
+Example combinations to try (not automatic presets):
+
+| Use | Mouse | Keyboard focus | Text cursor |
+| --- | --- | --- | --- |
+| Edge browsing | Push | No tracking | No tracking |
+| Typing with keyboard navigation | Push | Proportional | Centered |
+| Keep the pointer central | Centered | No tracking | No tracking |
+| Continuous following | Proportional | No tracking | No tracking |
+
+**Equal borders** replaces only full-screen mouse Push. The default 24 px margin
+is measured inward from the visible viewport edge and refers to the pointer
+hotspot; a large cursor sprite may extend past it. Zero means pan at the edge.
+For small viewports the inset is capped at 45% of each dimension. Switching it
+off restores native Push. Focus/caret Push and moving lenses stay native.
+
+**Allow scrolling beyond desktop edges** controls GNOME’s desktop clamp, a
+separate limit from the Push trigger margin. Off avoids empty space. On lets the
+camera travel further, especially in Centered mode, but may expose blank areas.
+Physical pointer travel still ends at the desktop boundary.
 
 Disabling the extension keeps the current zoom. Use GNOME Accessibility settings
 to turn zoom off independently. Lowering the maximum clamps the current zoom;

@@ -69,6 +69,8 @@ export default class Test extends Extension {
             return Clutter.EVENT_PROPAGATE;
         });
         this._smooth = new Smooth({...metadata, dir: root, path: root.get_path()});
+        const originalFocusPush = Main.magnifier.getZoomRegions()[0]._centerFromPointPush;
+        const originalMouseCenter = Main.magnifier.getZoomRegions()[0]._centerFromMousePosition;
         this._smooth.enable();
         const zoom = this._smooth;
         const region = Main.magnifier.getZoomRegions()[0];
@@ -189,11 +191,54 @@ export default class Test extends Extension {
             'zero-smoothing zoom preserves off-center cursor anchor');
         this._assert(region.getMouseTrackingMode() === tracking,
             'cursor-centered zoom does not change Push tracking mode');
+        // Execute the installed GNOME region's mouse path with controlled ROI
+        // and pointer coordinates; no compositor time elapses inside this loop.
+        const savedMouse = [Main.magnifier.xMouse, Main.magnifier.yMouse];
+        const roiCenter = [global.screen_width / 2, global.screen_height / 2];
+        for (const factor of [2, 8]) {
+            region._changeROI({xMagFactor: factor, yMagFactor: factor,
+                xCenter: roiCenter[0], yCenter: roiCenter[1], animate: false});
+            const [x, y, w, h] = region.getROI();
+            const margin = zoom._settings.get_double('push-margin');
+            const samples = [
+                [x + (margin - 1) / factor, roiCenter[1], -1 / factor, 0],
+                [x + w - (margin - 1) / factor, roiCenter[1], 1 / factor, 0],
+                [roiCenter[0], y + (margin - 1) / factor, 0, -1 / factor],
+                [roiCenter[0], y + h - (margin - 1) / factor, 0, 1 / factor],
+            ];
+            for (const [px, py, dx, dy] of samples) {
+                Main.magnifier.xMouse = px; Main.magnifier.yMouse = py;
+                const center = region._centerFromMousePosition();
+                this._assert(Math.abs(center[0] - roiCenter[0] - dx) < 1e-7 &&
+                    Math.abs(center[1] - roiCenter[1] - dy) < 1e-7,
+                `equal visible Push border at ${factor}x, direction ${dx},${dy}`);
+            }
+        }
+        zoom._settings.set_boolean('balanced-push', false);
+        const nativeCenter = originalMouseCenter.call(region);
+        this._assert(samePosition(region._centerFromMousePosition(), nativeCenter),
+            'Push correction OFF delegates to native cursor-padding behavior');
+        zoom._settings.set_boolean('balanced-push', true);
+        this._assert(region._centerFromPointPush === originalFocusPush,
+            'shared focus/caret Push method is not replaced');
+        [Main.magnifier.xMouse, Main.magnifier.yMouse] = savedMouse;
+        // Actual pointer input must use the corrected method as well.
+        magSettings.set_double('mag-factor', 2);
+        await this._wait(120);
+        pointer.notify_absolute_motion(GLib.get_monotonic_time(), 640, 480);
+        await this._wait(120);
+        region._changeROI({xCenter: 640, yCenter: 480, animate: false});
+        pointer.notify_absolute_motion(GLib.get_monotonic_time(), 950, 480);
+        await this._wait(120);
+        const [rx, , rw] = region.getROI();
+        this._assert(Math.abs(rx + rw / 2 - 642) < 1,
+            'native virtual pointer pans at corrected right margin');
         if (GLib.getenv('SPZ_DEMO_DIR'))
             await captureDemo(zoom, pointer, this._wait.bind(this), GLib.getenv('SPZ_DEMO_DIR'));
         global.stage.disconnect(this._captureId);
         this._captureId = 0;
         zoom.disable();
+        this._assert(region._centerFromMousePosition === originalMouseCenter, 'disable restores actual native mouse method');
         this._assert(zoom._connections === null && zoom._timeline === null, 'real extension disable releases connections');
         this._smooth = null;
     }

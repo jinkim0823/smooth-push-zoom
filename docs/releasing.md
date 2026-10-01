@@ -1,18 +1,28 @@
 # Releasing
 
-The first candidate is `v0.1.0-rc.1`. It is a preview, not a claim of complete
-hardware coverage. Standard metadata supports GNOME 46 only.
+The existing `v0.1.0-rc.1` tag identifies the earlier candidate, before balanced
+Push borders and Camera preferences. Keep that tag unchanged. For the first
+public release including these changes, create a new tag such as `v0.1.0` on the
+reviewed commit. Standard metadata supports GNOME 46 only.
 
 1. Run `./scripts/check.sh` and the GNOME 46 integration suite.
 2. Verify the release diff, license notices, README images and known limitations.
 3. Confirm the ZIP contents with `node tests/package.cjs`.
 4. Push the reviewed commit and tag to the project repository.
-5. Create a GitHub **prerelease** and attach the standard `.shell-extension.zip`.
-6. Attach the experimental 51 build separately, with `experimental-51` in its
-   downloadable filename. Both ZIPs intentionally share a UUID: they are
-   alternative versions, not extensions that should run simultaneously.
+5. For public distribution, make the repository public, then create a GitHub
+   release and attach the standard `.shell-extension.zip`. The **prerelease**
+   checkbox is optional: use it if seeking preview testers. State the tested
+   GNOME 46 scope and outstanding checks either way.
+6. Keep the experimental GNOME 51 build out of the initial standard release.
+   If distributing it later, label it explicitly and use `experimental-51` in its
+   downloadable filename. Both ZIPs share a UUID and cannot run side by side.
 7. Include SHA256 checksums and release notes. Link the demo as illustrative
    footage from an isolated software-rendered GNOME 46 session.
+
+For GNOME Extensions distribution, sign in at https://extensions.gnome.org/,
+open https://extensions.gnome.org/upload/, and upload the standard package.
+Respond to reviewer feedback and submit corrected versions as needed.
+Use the public repository URL for source and issue reports.
 
 GNOME Extensions submissions should use the standard package. The ZIP excludes
 development/test scripts and generated schema binaries. Retain readable source,

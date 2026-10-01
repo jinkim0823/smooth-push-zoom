@@ -1,6 +1,6 @@
 # Verification
 
-## Release candidate: 0.1.0-rc.1
+## Working tree: balanced Push and camera preferences
 
 Local checks were performed on September 16, 2026 with GNOME Shell 46.0 and GJS
 1.80.2. The standard metadata permits only GNOME 46. A separate experimental
@@ -10,13 +10,13 @@ package permits GNOME 51; it has not been run in a GNOME 51 desktop.
 | --- | --- |
 | JavaScript and shell syntax | Passed |
 | GSettings schema validation | Passed, strict mode |
-| Runtime regression suite | 40 checks passed with mocked GNOME objects |
+| Runtime regression suite | 44 checks passed with mocked GNOME objects |
 | Installer | Fresh install, self-install, invalid schema and symlink protection passed |
 | Package validation | Both channels have expected files, metadata and matching source |
-| GNOME 46 integration | 23 checks passed using real Shell, magnifier and virtual input |
-| Preferences | Loaded actual preferences code; numeric, toggle and two-way shortcut bindings passed |
-| GNOME 51 source contract | 7 checks passed using pinned upstream methods and stub rendering |
-| GitHub Actions | Workflow prepared; no hosted run until the repository is pushed |
+| GNOME 46 integration | 35 checks passed using real Shell, magnifier and virtual input |
+| Preferences | Loaded actual preferences code; zoom controls, tracking enums, bounds and margin sensitivity bindings passed |
+| GNOME 51 source contract | 16 checks passed using pinned upstream methods and stub rendering |
+| GitHub Actions | See repository Actions for commit-specific hosted status |
 
 ## Reproduce
 
@@ -34,7 +34,9 @@ paths; run it in that environment.
 
 The suite covers external zoom ON/OFF and factor changes, limit changes,
 zero smoothing, native virtual wheel routing, paired-event deduplication,
-virtual pointer tracking, Push preservation, cursor anchoring, and cleanup.
+virtual pointer tracking, Push preservation, cursor anchoring, equal four-edge
+thresholds at 2× and 8×, native fallback and method restoration. The virtual
+pointer also exercises the corrected right-edge path.
 Preferences are constructed using the real GTK/libadwaita widgets and GNOME
 preferences classes. The test registers them in an isolated preferences manager.
 
@@ -62,7 +64,7 @@ Expected SHA-256:
 `d5c99e0f4f97c9a19ca3777a96d33d450b97f10c2e29d1d672ee71f0d53f99d2`
 
 Selected actual upstream methods run against stub scene objects. This verifies
-ROI anchoring and bounds plus native tracking/easing contracts. It does not
+ROI anchoring, bounds, equal Push thresholds and native tracking/easing contracts. It does not
 load the complete GNOME 51 compositor or establish hardware compatibility.
 
 ## Outstanding manual coverage
