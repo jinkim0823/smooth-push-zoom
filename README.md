@@ -1,7 +1,10 @@
 # Smooth Push Zoom
 
-Smooth desktop zoom for GNOME: **hold Super + Alt and scroll**.
-Zoom around the cursor, with configurable edge panning and GNOME camera tracking.
+**macOS-style smooth zoom for GNOME** — hold **Super + Alt** and scroll.
+
+Zoom glides continuously instead of jumping in steps, the content under the
+cursor stays put, and GNOME's edge-push panning keeps working, now with equal
+margins on all four edges.
 
 ![Zoom and edge-panning demo](docs/demo.gif)
 
