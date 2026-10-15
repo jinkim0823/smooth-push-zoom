@@ -15,7 +15,7 @@ export default class SmoothPushZoomPreferences extends ExtensionPreferences {
 
         const shortcutGroup = new Adw.PreferencesGroup({
             title: _('Shortcut'),
-            description: _('Hold the selected modifier and scroll to zoom the whole desktop.'),
+            description: _('Hold the selected modifier and scroll to zoom.'),
         });
         page.add(shortcutGroup);
 
@@ -180,6 +180,12 @@ export default class SmoothPushZoomPreferences extends ExtensionPreferences {
         });
         bounds.add(beyond);
         native.bind('scroll-at-edges', beyond, 'active', Gio.SettingsBindFlags.DEFAULT);
+        const perMonitor = new Adw.SwitchRow({
+            title: _('Zoom only the monitor under the pointer'),
+            tooltip_text: _('Multiple monitors: magnify one monitor and keep the view inside it. Off zooms the whole desktop as one image.'),
+        });
+        bounds.add(perMonitor);
+        settings.bind('per-monitor', perMonitor, 'active', Gio.SettingsBindFlags.DEFAULT);
         window.connect('close-request', () => {
             for (const [object, id] of connections)
                 object.disconnect(id);

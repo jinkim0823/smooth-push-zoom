@@ -47,6 +47,10 @@ export default class Test extends Extension {
         const root = this.dir.get_parent().get_child('smooth-push-zoom@jinkim0823.github.io');
         const [, bytes] = root.get_child('metadata.json').load_contents(null);
         const metadata = JSON.parse(new TextDecoder().decode(bytes));
+        if (Main.layoutManager.monitors.length > 1) {
+            await this._runDual(root, metadata);
+            return;
+        }
         const prefsArgs = ['gjs', '-m', GLib.getenv('SPZ_PREFS_SCRIPT'), root.get_path()];
         const artifactDir = GLib.getenv('SPZ_ARTIFACT_DIR');
         if (artifactDir)
@@ -240,6 +244,61 @@ export default class Test extends Extension {
         zoom.disable();
         this._assert(region._centerFromMousePosition === originalMouseCenter, 'disable restores actual native mouse method');
         this._assert(zoom._connections === null && zoom._timeline === null, 'real extension disable releases connections');
+        this._smooth = null;
+    }
+    async _runDual(root, metadata) {
+        const monitors = Main.layoutManager.monitors.map(m => ({x: m.x, y: m.y,
+            width: m.width, height: m.height}));
+        this._results.push(`MONITORS: ${JSON.stringify(monitors)} stage ${global.screen_width}x${global.screen_height}`);
+        const region = Main.magnifier.getZoomRegions()[0];
+        const originalChange = region._changeROI;
+        this._smooth = new Smooth({...metadata, dir: root, path: root.get_path()});
+        this._smooth.enable();
+        const zoom = this._smooth;
+        zoom._magnifierSettings.set_string('mouse-tracking', 'push');
+        zoom._magnifierSettings.set_string('screen-position', 'full-screen');
+        const seat = Clutter.get_default_backend().get_default_seat();
+        const pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
+        this._virtualDevices = [pointer];
+        const rect = () => [region._viewPortX, region._viewPortY,
+            region._viewPortWidth, region._viewPortHeight].join();
+        const key = m => [m.x, m.y, m.width, m.height].join();
+        const inside = m => {
+            const [x, y, w, h] = region.getROI();
+            return x >= m.x - .5 && y >= m.y - .5 &&
+                x + w <= m.x + m.width + .5 && y + h <= m.y + m.height + .5;
+        };
+        const [small, large] = [...monitors].sort((a, b) => a.width * a.height - b.width * b.height);
+        const move = async (x, y) => {
+            pointer.notify_absolute_motion(GLib.get_monotonic_time(), x, y);
+            await this._wait(150);
+        };
+        await move(large.x + large.width * 0.7, large.y + large.height * 0.5);
+        for (let i = 0; i < 8; i++) this._scroll();
+        await this._wait(600);
+        this._assert(Main.magnifier.isActive() && !zoom._failed, 'dual: zoom activates');
+        this._assert(rect() === key(large) && !region._isFullScreen(),
+            'dual: only the monitor under the pointer is magnified');
+        this._assert(region._magView.x === large.x && region._magView.width === large.width &&
+            region._magView.height === large.height, 'dual: magnified actor covers exactly that monitor');
+        this._assert(Main.uiGroup.opacity === 255, 'dual: the other monitor keeps its normal desktop');
+        this._assert(inside(large), 'dual: view stays inside the zoomed monitor');
+        await move(small.x + small.width * 0.4, small.y + small.height * 0.6);
+        this._assert(rect() === key(small) && inside(small), 'dual: zoom moves to the other monitor with the pointer');
+        region._changeROI({xCenter: global.screen_width, yCenter: global.screen_height, animate: false});
+        this._assert(inside(small), 'dual: panning cannot reach the other monitor or empty stage area');
+        await move(small.x + small.width - 2, small.y + small.height - 2);
+        this._assert(inside(small) && rect() === key(small), 'dual: Push at the inner corner stays on the monitor');
+        zoom._settings.set_boolean('per-monitor', false);
+        await this._wait(100);
+        this._assert(region._isFullScreen(), 'dual: switching the option off restores whole-desktop zoom');
+        zoom._settings.set_boolean('per-monitor', true);
+        await move(large.x + 50, large.y + 50);
+        this._assert(rect() === key(large), 'dual: switching the option on again applies on next motion');
+        zoom._settings.reset('per-monitor');
+        zoom.disable();
+        this._assert(region._isFullScreen() && region._changeROI === originalChange,
+            'dual: disable restores full screen and the native method');
         this._smooth = null;
     }
     _exit(success) {

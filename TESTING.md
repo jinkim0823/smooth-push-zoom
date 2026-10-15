@@ -67,10 +67,25 @@ Selected actual upstream methods run against stub scene objects. This verifies
 ROI anchoring, bounds, equal Push thresholds and native tracking/easing contracts. It does not
 load the complete GNOME 51 compositor or establish hardware compatibility.
 
+## Monitor mode
+
+`tests/integration.sh` runs a second isolated session with two virtual monitors,
+1920×1080 and 2560×1440. That session checks the following:
+- only the monitor under the pointer is magnified;
+- the real desktop stays visible on the other monitor;
+- the zoom follows the virtual pointer across monitors;
+- panning cannot reach the other monitor or the empty stage area;
+- the option switch works in both directions;
+- disable restores full screen and the native method.
+
+Mock tests cover anchoring, clamping, proportional mapping, and every case where
+the mode must stay off. Software rendering cannot reproduce GPU-specific tearing,
+so the GNOME rendering bugs themselves are verified only on real hardware.
+
 ## Outstanding manual coverage
 
 - Physical mouse wheel and touchpad feel on a normal dconf-backed desktop.
-- Multiple monitors, mixed scaling and high refresh-rate displays.
+- Physical multiple monitors, mixed scaling and high refresh-rate displays.
 - Lock/unlock, focus/caret tracking and display-layout changes during zoom.
 - X11 on GNOME 46; all actual GNOME 51 activation, preferences and input behavior.
 

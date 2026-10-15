@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- With several monitors, zoom only the monitor under the pointer (new option, on by default). The view stays inside that monitor and follows the pointer to another monitor. This avoids GNOME's whole-desktop zoom spilling across monitors and the empty-area glitches with mismatched monitor sizes.
+- Proportional mouse tracking maps the current monitor in monitor mode.
+
 ## 0.1.0 — 2026-10-01
 
 First public release. Supports GNOME Shell 46 only.

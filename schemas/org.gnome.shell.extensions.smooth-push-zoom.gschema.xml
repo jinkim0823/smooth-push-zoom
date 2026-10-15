@@ -12,6 +12,11 @@
       <summary>Push edge margin</summary>
       <description>Distance from each visible edge in logical pixels at which panning starts. Independent of zoom. Zero requires reaching the edge; large values are capped at 45 percent of each viewport dimension.</description>
     </key>
+    <key name="per-monitor" type="b">
+      <default>true</default>
+      <summary>Zoom only the monitor under the pointer</summary>
+      <description>With several monitors and full-screen zoom, magnify only the monitor that contains the pointer and keep the view inside it. The zoom moves with the pointer to another monitor. No effect with one monitor, lenses or partial screen positions.</description>
+    </key>
     <key name="low-latency-pointer" type="b">
       <default>true</default>
       <summary>Responsive magnified pointer</summary>

@@ -54,5 +54,30 @@ Preferences bind tracking enums and `scroll-at-edges` directly to the native
 GSettings schema. No native settings are rewritten at enable/disable; opening
 preferences only reads them. Changes are intentionally shared and persistent.
 
+## Monitor mode
+
+In GNOME 46.0, full-screen zoom sets the viewport to the whole stage
+(`global.screen_width × global.screen_height`). With several monitors, one
+magnified image spans all of them. With mismatched sizes, the stage also contains
+areas outside every monitor, which GNOME renders with glitches (issues 5751 and 8101).
+
+When `per-monitor` is on, there are at least two monitors, `screen-position` is
+`full-screen` and `lens-mode` is off, the extension calls the public
+`ZoomRegion.setViewPort()` with the geometry of the monitor under the pointer.
+That puts GNOME's region into its partial-screen path. The real desktop stays
+visible on the other monitors, and the system cursor reappears there. The
+extension records which regions it took over. The anchor, balanced Push and a
+monitor-aware proportional mapping treat such a region like a full-screen one.
+
+A wrapper on `_changeROI()` clamps the ROI centre to the assigned monitor after
+every update, so mouse, focus and caret tracking cannot reveal another monitor.
+Pointer motion (the stage `captured-event`, and `before-update` on older GNOME)
+checks the monitor under the pointer. On a change, the viewport moves, and the
+content under the pointer is placed at its physical position. Changes to
+`screen-position`, `lens-mode`, the monitor layout or the option re-evaluate
+the mode. Disabling the extension, or leaving the mode, calls
+`setScreenPosition()` with GNOME's configured position. The viewport fields
+(`_viewPortX`, etc.) are read through one adapter, because GNOME provides no getter.
+
 Sources: [GNOME 46 magnifier](https://github.com/GNOME/gnome-shell/blob/46.0/js/ui/magnifier.js),
 [GNOME 51 magnifier](https://github.com/GNOME/gnome-shell/blob/51.0/js/ui/magnifier.js).

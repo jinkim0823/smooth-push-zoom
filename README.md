@@ -20,6 +20,7 @@ benchmark.
 - Smooth, proportional zoom steps for mouse wheels and touchpads.
 - Preserves GNOME's selected tracking mode, including **Pushes Contents Around**.
 - Equal, adjustable Push margins on all four edges, independent of zoom level.
+- With several monitors, zooms only the monitor under the pointer and follows it to the next one.
 - Camera preferences for native mouse, keyboard focus and text cursor tracking.
 - Zooming out to **1.00× turns Desktop Zoom off**.
 - External GNOME zoom changes take precedence over an ongoing animation.
@@ -111,6 +112,17 @@ separate limit from the Push trigger margin. Off avoids empty space. On lets the
 camera travel further, especially in Centered mode, but may expose blank areas.
 Physical pointer travel still ends at the desktop boundary.
 
+**Zoom only the monitor under the pointer** (on by default) applies with two or
+more monitors in full-screen zoom. GNOME otherwise magnifies all monitors as one
+image, so the zoom spills onto the neighbouring monitor, and mismatched monitor
+sizes leave an empty stage area that can render glitches
+([GNOME#5751](https://gitlab.gnome.org/GNOME/gnome-shell/-/work_items/5751),
+[GNOME#8101](https://gitlab.gnome.org/GNOME/gnome-shell/-/work_items/8101)).
+With this option the view stays inside the current monitor. The other monitors
+stay unmagnified, and the zoom moves when the pointer crosses to another monitor.
+Keyboard focus or the text cursor on another monitor does not move the zoom
+there. The view stops at the current monitor's edge.
+
 Disabling the extension keeps the current zoom. Use GNOME Accessibility settings
 to turn zoom off independently. Lowering the maximum clamps the current zoom;
 independent changes made later in GNOME settings are not restricted by that limit.
@@ -127,8 +139,9 @@ independent changes made later in GNOME settings are not restricted by that limi
 
 Desktop bounds may override the zoom anchor to prevent empty space, especially
 when zooming out. Moving lenses and partial-screen regions retain GNOME's native
-zoom policy. Multi-monitor, mixed scaling, lock/unlock, hardware input feel and
-focus/caret interactions need more testing. Avoid enabling another scroll-zoom
+zoom policy. Monitor mode is tested with two mismatched virtual monitors in an
+isolated GNOME 46 session. Physical multi-monitor setups, mixed scaling,
+lock/unlock, hardware input feel and focus/caret interactions need more testing. Avoid enabling another scroll-zoom
 extension simultaneously. See [testing details](TESTING.md).
 
 GNOME 51 uses native event-driven pointer tracking automatically; the optional

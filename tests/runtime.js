@@ -13,7 +13,8 @@ function assert(condition, message = 'assertion failed') {
 function near(actual, expected, tolerance = 1e-9) {
     assert(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 }
-function fixture({active = false, factor = 2.75, delayed = false, nativeTracking = false} = {}) {
+function fixture({active = false, factor = 2.75, delayed = false, nativeTracking = false,
+    stage: stageSize = [1280, 720], monitors = null} = {}) {
     let now = 0;
     const queue = [];
     const timelines = new Set();
@@ -36,6 +37,7 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         get_string(key) { return this.values[key]; }
         get_double(key) { return this.values[key]; }
         get_boolean(key) { return this.values[key]; }
+        get_enum(key) { return this.values[key]; }
         set_double(key, value) { this.set(key, value); }
         set_boolean(key, value) { this.set(key, value); }
         set(key, value) {
@@ -47,24 +49,42 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         }
     }
     const settings = new Settings({'modifier-key': 'super-alt', 'zoom-sensitivity': .12,
-        'smoothing-ms': 90, 'max-zoom': 12, 'low-latency-pointer': true, 'balanced-push': true, 'push-margin': 24});
-    const magSettings = new Settings({'mag-factor': factor});
+        'smoothing-ms': 90, 'max-zoom': 12, 'low-latency-pointer': true, 'balanced-push': true, 'push-margin': 24,
+        'per-monitor': true});
+    const [W, H] = stageSize;
+    const FULL = 1;
+    const magSettings = new Settings({'mag-factor': factor, 'screen-position': FULL,
+        'lens-mode': false});
     const appSettings = new Settings({'screen-magnifier-enabled': active});
     const pointer = [300, 240, 0];
     const region = {factor, tracking: 'push', _followingCursor: true, calls: [],
-        cx: 640, cy: 360, fullScreen: true,
+        cx: W / 2, cy: H / 2, fullScreen: true, viewPortCalls: 0,
+        _viewPortX: 0, _viewPortY: 0, _viewPortWidth: W, _viewPortHeight: H,
         _isFullScreen() { return this.fullScreen; },
-        getROI() { return [this.cx - 640 / this.factor, this.cy - 360 / this.factor,
-            1280 / this.factor, 720 / this.factor]; },
-        getMagFactor() { return [this.factor, this.factor]; },
+        getROI() { return [this.cx - this._viewPortWidth / 2 / this.factor,
+            this.cy - this._viewPortHeight / 2 / this.factor,
+            this._viewPortWidth / this.factor, this._viewPortHeight / this.factor]; },
+        setViewPort({x, y, width, height}) {
+            this.viewPortCalls++;
+            Object.assign(this, {_viewPortX: x, _viewPortY: y,
+                _viewPortWidth: width, _viewPortHeight: height});
+            this.fullScreen = x === 0 && y === 0 && width === W && height === H;
+            this._changeROI({redoCursorTracking: this._followingCursor, animate: false});
+        },
+        setScreenPosition(position) {
+            if (position === FULL) this.setViewPort({x: 0, y: 0, width: W, height: H});
+        },
+        getMagFactor() { return [this.factor, this.factor]; }};
+    const nativeCenter = () => ['native'];
+    Object.setPrototypeOf(region, {_centerFromMousePosition: nativeCenter,
         _changeROI(params) {
             assert(params.animate === false, 'nested animation');
-            this.calls.push(params); this.factor = params.xMagFactor;
+            this.calls.push(params);
+            if (params.xMagFactor !== undefined) this.factor = params.xMagFactor;
             if (params.xCenter !== undefined) this.cx = params.xCenter;
             if (params.yCenter !== undefined) this.cy = params.yCenter;
-        }};
-    const nativeCenter = () => ['native'];
-    Object.setPrototypeOf(region, {_centerFromMousePosition: nativeCenter});
+        },
+    });
     const magnifier = new Emitter();
     region._magnifier = magnifier;
     region._mouseTrackingMode = 1;
@@ -111,10 +131,13 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         }
         clear() { for (const [proto, name, original] of this.saved) proto[name] = original; this.saved = []; }
     }
-    const GDesktopEnums = {MagnifierMouseTrackingMode: {PUSH: 1}};
+    const GDesktopEnums = {MagnifierMouseTrackingMode: {PUSH: 1, PROPORTIONAL: 3},
+        MagnifierScreenPosition: {FULL_SCREEN: FULL}};
+    const layoutManager = new Emitter();
+    layoutManager.monitors = monitors ?? [{x: 0, y: 0, width: W, height: H}];
     const Klass = new Function('Clutter', 'Gio', 'GLib', 'Main', 'Extension', 'global', 'console', 'InjectionManager', 'GDesktopEnums', source);
-    const extension = new (Klass(Clutter, Gio, GLib, {magnifier}, Extension,
-        {stage, get_pointer: () => pointer.map(Math.trunc), screen_width: 1280, screen_height: 720},
+    const extension = new (Klass(Clutter, Gio, GLib, {magnifier, layoutManager}, Extension,
+        {stage, get_pointer: () => pointer.map(Math.trunc), screen_width: W, screen_height: H},
         {error(message) { errors.push(message); }}, InjectionManager, GDesktopEnums))();
     extension.enable();
     function flush() { while (queue.length) queue.shift()(); }
@@ -134,8 +157,13 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         flush();
         assert(!timelines.size, 'animation failed to settle');
     }
+    function move(x, y) {
+        pointer[0] = x; pointer[1] = y;
+        Object.assign(magnifier, {xMouse: x, yMouse: y});
+        return extension._onCapturedEvent({type() { return 2; }});
+    }
     return {extension, settings, magSettings, appSettings, magnifier, region, timelines,
-        stage, pointer, errors, tick, flush, scroll, settle};
+        stage, pointer, errors, tick, flush, scroll, settle, move, layoutManager};
 }
 let count = 0;
 function test(name, callback) { callback(); print(`PASS ${++count}: ${name}`); }
@@ -422,5 +450,97 @@ test('disable restores the native method and re-enable does not stack wrappers',
     assert(original()[0] === 'native');
     f.extension.enable(); assert(f.region._centerFromMousePosition !== original);
     f.extension.disable(); assert(f.region._centerFromMousePosition === original);
+});
+
+const DUAL = {stage: [4480, 1440], monitors: [
+    {x: 0, y: 0, width: 1920, height: 1080}, {x: 1920, y: 0, width: 2560, height: 1440}]};
+function viewPort(f) {
+    const r = f.region;
+    return [r._viewPortX, r._viewPortY, r._viewPortWidth, r._viewPortHeight];
+}
+function inside(f) {
+    const [vx, vy, vw, vh] = viewPort(f);
+    const [x, y, w, h] = f.region.getROI();
+    return x >= vx - 1e-6 && y >= vy - 1e-6 && x + w <= vx + vw + 1e-6 && y + h <= vy + vh + 1e-6;
+}
+function monitorCursor(f) {
+    const [vx, vy, vw, vh] = viewPort(f);
+    return [vx + vw / 2 + (f.pointer[0] - f.region.cx) * f.region.factor,
+        vy + vh / 2 + (f.pointer[1] - f.region.cy) * f.region.factor];
+}
+test('dual monitor: zoom covers only the monitor under the pointer', () => {
+    const f = fixture({...DUAL});
+    f.pointer[0] = 2500; f.pointer[1] = 700;
+    f.scroll(); f.settle();
+    assert(viewPort(f).join() === '1920,0,2560,1440', viewPort(f).join());
+    assert(!f.region.fullScreen && inside(f), 'ROI left the monitor');
+    monitorCursor(f).forEach((v, i) => near(v, f.pointer[i], 1e-6));
+});
+test('dual monitor: zoom anchors on the smaller monitor without empty stage area', () => {
+    const f = fixture({...DUAL, factor: 4});
+    f.pointer[0] = 1900; f.pointer[1] = 1070;
+    f.scroll(); f.settle();
+    assert(viewPort(f).join() === '0,0,1920,1080' && inside(f));
+});
+test('dual monitor: tracking cannot pan into the other monitor or below it', () => {
+    const f = fixture({...DUAL, active: true, factor: 3});
+    f.move(100, 500);
+    f.region._changeROI({xCenter: 1900, yCenter: 1300, animate: false});
+    assert(inside(f), 'clamp failed');
+    const [x, y, w, h] = f.region.getROI();
+    near(x + w, 1920); near(y + h, 1080);
+});
+test('dual monitor: moving to the other monitor moves the zoom with it', () => {
+    const f = fixture({...DUAL, active: true, factor: 2.5});
+    f.move(500, 500);
+    assert(viewPort(f).join() === '0,0,1920,1080');
+    const calls = f.region.viewPortCalls;
+    f.move(600, 520);
+    assert(f.region.viewPortCalls === calls, 'same monitor must not reset the viewport');
+    f.move(1925, 300);
+    assert(viewPort(f).join() === '1920,0,2560,1440' && inside(f));
+    monitorCursor(f).forEach((v, i) => near(v, f.pointer[i], 1e-6));
+});
+test('dual monitor: proportional tracking maps the current monitor', () => {
+    const f = fixture({...DUAL, active: true, factor: 2});
+    f.move(1920 + 2560, 720); f.region._mouseTrackingMode = 3;
+    Object.assign(f.magnifier, {xMouse: 1920 + 2560, yMouse: 720});
+    const [cx] = f.region._centerFromMousePosition();
+    const [, , w] = f.region.getROI();
+    const padding = 1440 / 5 / 2;
+    near(cx, 4480 - (w / 2 - padding));
+});
+test('monitor mode stays off for one monitor, lenses, half screens and when disabled', () => {
+    const single = fixture({active: true});
+    single.move(300, 240); assert(single.region.viewPortCalls === 0);
+    for (const change of [
+        f => f.settings.set('per-monitor', false),
+        f => f.magSettings.set('lens-mode', true),
+        f => f.magSettings.set('screen-position', 2),
+    ]) {
+        const f = fixture({...DUAL, active: true});
+        change(f);
+        f.move(300, 300);
+        assert(f.region.viewPortCalls === 0 && f.region.fullScreen, 'took over a region');
+    }
+    const lens = fixture({...DUAL, active: true}); lens.region.fullScreen = false;
+    lens.move(300, 300); assert(lens.region.viewPortCalls === 0);
+});
+test('switching monitor mode off, unplugging and disabling restore full screen', () => {
+    for (const undo of [
+        f => f.settings.set('per-monitor', false),
+        f => { f.layoutManager.monitors = [{x: 0, y: 0, width: 4480, height: 1440}];
+            f.layoutManager.emit('monitors-changed'); },
+        f => f.extension.disable(),
+    ]) {
+        const f = fixture({...DUAL, active: true});
+        f.move(300, 300); assert(!f.region.fullScreen);
+        undo(f);
+        assert(f.region.fullScreen && f.extension._monitorRegions?.size !== 1);
+    }
+    const f = fixture({...DUAL}); f.extension.disable();
+    const original = f.region._changeROI;
+    f.extension.enable(); assert(f.region._changeROI !== original);
+    f.extension.disable(); assert(f.region._changeROI === original);
 });
 print(`${count} runtime regression checks passed (mock GNOME objects).`);

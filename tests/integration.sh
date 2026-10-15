@@ -32,18 +32,28 @@ mkdir -p "$XDG_DATA_HOME/gnome-shell/extensions" "$XDG_CONFIG_HOME" "$XDG_CACHE_
 chmod 700 "$XDG_RUNTIME_DIR"
 bash "$ROOT/install.sh" >/dev/null
 cp -a "$ROOT/tests/gnome-integration" "$XDG_DATA_HOME/gnome-shell/extensions/smooth-push-zoom-test@local"
-if ! dbus-run-session -- bash -c '
-    gsettings set org.gnome.shell enabled-extensions '\''["smooth-push-zoom-test@local"]'\''
-    gsettings set org.gnome.shell disable-user-extensions false
-    exec timeout "$SPZ_TEST_TIMEOUT" gnome-shell --wayland --headless --no-x11 --wayland-display=spz-test --virtual-monitor 1280x960 --mode=user
-' > "$TEST_ROOT/session.log" 2>&1; then
-    cat "$TEST_ROOT/session.log"
-    exit 1
-fi
 RESULT="$XDG_CACHE_HOME/zoom-result.txt"
-if [[ ! -f "$RESULT" ]] || [[ "$(head -n 1 "$RESULT")" != SUCCESS ]]; then
-    cat "$TEST_ROOT/session.log"
-    [[ ! -f "$RESULT" ]] || cat "$RESULT"
-    exit 1
-fi
-cat "$RESULT"
+# One monitor runs the full suite; two mismatched monitors run the monitor-mode checks.
+for MONITORS in "1280x960" "1920x1080 2560x1440"; do
+    [[ -z "${SPZ_DEMO_DIR:-}" || "$MONITORS" == "1280x960" ]] || continue
+    ARGS=()
+    for size in $MONITORS; do ARGS+=(--virtual-monitor "$size"); done
+    rm -f "$RESULT"
+    rm -rf "$XDG_CONFIG_HOME/glib-2.0"
+    export SPZ_MONITOR_ARGS="${ARGS[*]}"
+    if ! dbus-run-session -- bash -c '
+        gsettings set org.gnome.shell enabled-extensions '\''["smooth-push-zoom-test@local"]'\''
+        gsettings set org.gnome.shell disable-user-extensions false
+        exec timeout "$SPZ_TEST_TIMEOUT" gnome-shell --wayland --headless --no-x11 --wayland-display=spz-test $SPZ_MONITOR_ARGS --mode=user
+    ' > "$TEST_ROOT/session.log" 2>&1; then
+        cat "$TEST_ROOT/session.log"
+        exit 1
+    fi
+    if [[ ! -f "$RESULT" ]] || [[ "$(head -n 1 "$RESULT")" != SUCCESS ]]; then
+        cat "$TEST_ROOT/session.log"
+        [[ ! -f "$RESULT" ]] || cat "$RESULT"
+        exit 1
+    fi
+    echo "== monitors: $MONITORS"
+    cat "$RESULT"
+done
