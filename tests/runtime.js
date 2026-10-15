@@ -77,6 +77,7 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         getMagFactor() { return [this.factor, this.factor]; }};
     const nativeCenter = () => ['native'];
     Object.setPrototypeOf(region, {_centerFromMousePosition: nativeCenter,
+        _updateMagViewGeometry() {},
         _changeROI(params) {
             assert(params.animate === false, 'nested animation');
             this.calls.push(params);

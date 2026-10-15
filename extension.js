@@ -181,8 +181,25 @@ export default class SmoothPushZoomExtension extends Extension {
                     }
                     return original.apply(this, args);
                 });
-            if (typeof prototype._changeROI !== 'function')
+            if (typeof prototype._changeROI !== 'function' ||
+                typeof prototype._updateMagViewGeometry !== 'function')
                 throw new Error('Unsupported GNOME magnifier API');
+            // GNOME draws a theme-coloured border around every zoom region that
+            // is not the whole stage. A monitor viewport is full-screen from the
+            // user's point of view, so give it the borderless full-screen style.
+            this._injections.overrideMethod(prototype, '_updateMagViewGeometry',
+                original => function (...args) {
+                    original.apply(this, args);
+                    if (this._magView && extension._monitorRegions?.has(this)) {
+                        this._magView.add_style_class_name('full-screen');
+                        // The St.Bin centres its clipping group at that group's
+                        // natural size. GNOME sizes the group's background to the
+                        // first monitor, so on a larger monitor the magnified image
+                        // was offset by half the size difference. Pin it to the viewport.
+                        this._magView.get_child()?.set_size(
+                            this._viewPortWidth, this._viewPortHeight);
+                    }
+                });
             // A monitor viewport must never show another monitor or the empty
             // stage area beside a smaller monitor (GNOME issues 5751, 8101).
             // This covers mouse, focus and caret tracking alike.
@@ -322,7 +339,8 @@ export default class SmoothPushZoomExtension extends Extension {
     _restoreRegion(region) {
         if (!this._monitorRegions?.delete(region))
             return;
-        // Return to GNOME's configured screen position.
+        // Return to GNOME's configured screen position and natural group size.
+        region._magView?.get_child()?.set_size(-1, -1);
         region.setScreenPosition(this._magnifierSettings.get_enum('screen-position'));
     }
 

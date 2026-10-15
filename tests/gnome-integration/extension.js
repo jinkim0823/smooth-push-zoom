@@ -246,7 +246,36 @@ export default class Test extends Extension {
         this._assert(zoom._connections === null && zoom._timeline === null, 'real extension disable releases connections');
         this._smooth = null;
     }
+    async _arrangeSmallFirst() {
+        // Put the smaller monitor at x = 0 and make the larger one primary,
+        // like a laptop-style layout. GNOME sizes parts of the magnifier from
+        // the first monitor, which exposed an offset bug only in this order.
+        const call = (method, params, type) => new Promise((resolve, reject) =>
+            Gio.DBus.session.call('org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
+                'org.gnome.Mutter.DisplayConfig', method, params,
+                type ? new GLib.VariantType(type) : null, Gio.DBusCallFlags.NONE, -1, null,
+                (connection, result) => {
+                    try { resolve(connection.call_finish(result)); } catch (error) { reject(error); }
+                }));
+        const [serial, monitors] = (await call('GetCurrentState', null,
+            '(ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv})')).deepUnpack();
+        const info = monitors.map(([spec, modes]) => {
+            const mode = modes.find(m => m[6]['is-current']?.deepUnpack()) ?? modes[0];
+            return {connector: spec[0], mode: mode[0], width: mode[1]};
+        }).sort((a, b) => a.width - b.width);
+        let x = 0;
+        const logical = info.map((m, i) => {
+            const entry = [x, 0, 1.0, 0, i === info.length - 1, [[m.connector, m.mode, {}]]];
+            x += m.width;
+            return entry;
+        });
+        await call('ApplyMonitorsConfig',
+            new GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})', [serial, 1, logical, {}]), null);
+        await this._wait(1500);
+    }
     async _runDual(root, metadata) {
+        if (GLib.getenv('SPZ_SMALL_FIRST'))
+            await this._arrangeSmallFirst();
         const monitors = Main.layoutManager.monitors.map(m => ({x: m.x, y: m.y,
             width: m.width, height: m.height}));
         this._results.push(`MONITORS: ${JSON.stringify(monitors)} stage ${global.screen_width}x${global.screen_height}`);
@@ -282,9 +311,18 @@ export default class Test extends Extension {
         this._assert(region._magView.x === large.x && region._magView.width === large.width &&
             region._magView.height === large.height, 'dual: magnified actor covers exactly that monitor');
         this._assert(Main.uiGroup.opacity === 255, 'dual: the other monitor keeps its normal desktop');
+        this._assert(region._magView.has_style_class_name('full-screen'),
+            'dual: monitor view has no partial-region border');
+        const group = region._magView.get_child();
+        this._assert(group.get_allocation_box().get_x() === 0 &&
+            group.get_allocation_box().get_y() === 0 &&
+            group.width === large.width && group.height === large.height,
+            'dual: magnified image is not offset inside the monitor view');
         this._assert(inside(large), 'dual: view stays inside the zoomed monitor');
         await move(small.x + small.width * 0.4, small.y + small.height * 0.6);
         this._assert(rect() === key(small) && inside(small), 'dual: zoom moves to the other monitor with the pointer');
+        this._assert(group.get_allocation_box().get_x() === 0 && group.width === small.width,
+            'dual: magnified image fits the second monitor too');
         region._changeROI({xCenter: global.screen_width, yCenter: global.screen_height, animate: false});
         this._assert(inside(small), 'dual: panning cannot reach the other monitor or empty stage area');
         await move(small.x + small.width - 2, small.y + small.height - 2);

@@ -69,8 +69,12 @@ load the complete GNOME 51 compositor or establish hardware compatibility.
 
 ## Monitor mode
 
-`tests/integration.sh` runs a second isolated session with two virtual monitors,
-1920×1080 and 2560×1440. That session checks the following:
+`tests/integration.sh` runs two more isolated sessions with two virtual monitors,
+1920×1080 and 2560×1440. The first session puts the larger monitor first. The
+second puts the smaller monitor at x = 0 and makes the larger one primary. That
+order exposed an offset bug: GNOME sizes the magnifier's clipping group from the
+first monitor, so the image was offset on the larger monitor until the group was
+pinned to the viewport. That session checks the following:
 - only the monitor under the pointer is magnified;
 - the real desktop stays visible on the other monitor;
 - the zoom follows the virtual pointer across monitors;

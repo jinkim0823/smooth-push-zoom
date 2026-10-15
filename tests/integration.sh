@@ -14,6 +14,11 @@ cleanup() {
     if mountpoint -q "$TEST_ROOT/run/doc"; then
         fusermount3 -u "$TEST_ROOT/run/doc"
     fi
+    # Session helpers can still be exiting; retry briefly instead of failing a passed run.
+    for _ in 1 2 3 4 5; do
+        rm -rf -- "$TEST_ROOT" 2>/dev/null && return 0
+        sleep 1
+    done
     rm -rf -- "$TEST_ROOT"
 }
 trap cleanup EXIT
@@ -34,7 +39,10 @@ bash "$ROOT/install.sh" >/dev/null
 cp -a "$ROOT/tests/gnome-integration" "$XDG_DATA_HOME/gnome-shell/extensions/smooth-push-zoom-test@local"
 RESULT="$XDG_CACHE_HOME/zoom-result.txt"
 # One monitor runs the full suite; two mismatched monitors run the monitor-mode checks.
-for MONITORS in "1280x960" "1920x1080 2560x1440"; do
+# The second dual run rearranges the monitors so the smaller one is first.
+for CASE in "1280x960" "1920x1080 2560x1440" "small-first:1920x1080 2560x1440"; do
+    MONITORS="${CASE#small-first:}"
+    if [[ "$CASE" == small-first:* ]]; then export SPZ_SMALL_FIRST=1; else unset SPZ_SMALL_FIRST; fi
     [[ -z "${SPZ_DEMO_DIR:-}" || "$MONITORS" == "1280x960" ]] || continue
     ARGS=()
     for size in $MONITORS; do ARGS+=(--virtual-monitor "$size"); done
@@ -54,6 +62,6 @@ for MONITORS in "1280x960" "1920x1080 2560x1440"; do
         [[ ! -f "$RESULT" ]] || cat "$RESULT"
         exit 1
     fi
-    echo "== monitors: $MONITORS"
+    echo "== monitors: $CASE"
     cat "$RESULT"
 done
