@@ -1,6 +1,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
+import GObject from 'gi://GObject';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import Smooth from '../smooth-push-zoom@jinkim0823.github.io/extension.js';
@@ -82,15 +83,22 @@ export default class Test extends Extension {
         const appSettings = zoom._a11yAppSettings;
         magSettings.set_string('mouse-tracking', 'push');
         await this._wait(100);
+        const hooked = id => id !== 0 && GObject.signal_handler_is_connected(global.stage, id);
+        this._assert(!Main.magnifier.isActive() && zoom._frameHookId === 0,
+            'no per-frame hook while zoom is off');
         const tracking = region.getMouseTrackingMode();
         this._scroll();
         await this._wait(500);
         this._assert(!zoom._failed && !zoom._timeline && Main.magnifier.isActive(), 'real Clutter timeline converges and activates magnifier');
+        const frameHook = zoom._frameHookId;
+        this._assert(hooked(frameHook), 'per-frame hook connects when zoom activates');
         this._assert(Math.abs(region.getMagFactor()[0] - 1.13) < .001, 'runtime factor and persisted factor agree at 1.13x');
         this._assert(region.getMouseTrackingMode() === tracking, 'GNOME push tracking survives zoom');
         this._scroll(Clutter.ScrollDirection.DOWN);
         await this._wait(500);
         this._assert(!Main.magnifier.isActive() && !appSettings.get_boolean('screen-magnifier-enabled'), 'zoom-out disables both runtime and accessibility setting');
+        this._assert(zoom._frameHookId === 0 && !GObject.signal_handler_is_connected(global.stage, frameHook),
+            'per-frame hook disconnects when zoom turns off');
         magSettings.set_double('mag-factor', 2.75);
         appSettings.set_boolean('screen-magnifier-enabled', true);
         await this._wait(150);
@@ -243,7 +251,8 @@ export default class Test extends Extension {
         this._captureId = 0;
         zoom.disable();
         this._assert(region._centerFromMousePosition === originalMouseCenter, 'disable restores actual native mouse method');
-        this._assert(zoom._connections === null && zoom._timeline === null, 'real extension disable releases connections');
+        this._assert(zoom._connections === null && zoom._timeline === null && zoom._frameHookId === 0,
+            'real extension disable releases connections');
         this._smooth = null;
     }
     async _arrangeSmallFirst() {

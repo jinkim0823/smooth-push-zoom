@@ -78,7 +78,7 @@ gnome-extensions prefs smooth-push-zoom@jinkim0823.github.io
 | Zoom speed | 0.12 | About +12.7% per upward wheel step |
 | Smoothing | 90 ms | Time to cover about 95% of a zoom change; 0 is immediate |
 | Maximum zoom | 12× | Upper limit for zoom controlled by this extension |
-| Responsive pointer | On | Additional frame-based tracking on older GNOME |
+| Responsive pointer | On | Additional frame-based tracking while zoomed, on older GNOME |
 | Equal Push borders | On | Full-screen mouse Push uses equal hotspot insets instead of native cursor padding |
 | Edge margin | 24 px | Visible logical-pixel inset on every edge; 0–200, independent of zoom |
 

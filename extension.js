@@ -14,6 +14,7 @@ const EPSILON = 0.0015;
 export default class SmoothPushZoomExtension extends Extension {
     enable() {
         this._connections = [];
+        this._frameHookId = 0;
         this._timeline = null;
         this._updating = false;
         this._failed = false;
@@ -41,6 +42,7 @@ export default class SmoothPushZoomExtension extends Extension {
 
         this._connect(this._settings, 'changed', (_settings, key) => {
             this._readSettings();
+            this._syncFrameHook();
             if (key === 'max-zoom') {
                 if (!this._timeline)
                     this._syncFromRuntime();
@@ -89,6 +91,8 @@ export default class SmoothPushZoomExtension extends Extension {
             }
         });
         this._connect(this._magnifier, 'active-changed', () => {
+            // Also for our own activation, which runs with _updating set.
+            this._syncFrameHook();
             if (!this._updating) {
                 this._stopAnimation();
                 this._syncFromRuntime();
@@ -96,34 +100,28 @@ export default class SmoothPushZoomExtension extends Extension {
         });
         this._connect(global.stage, 'captured-event', (_actor, event) =>
             this._onCapturedEvent(event));
-        if (!this._nativePointerTracking) {
-            this._connect(global.stage, 'before-update', () => {
-                if (this._lowLatencyPointer && !this._failed && this._magnifier.isActive()) {
-                    this._runSafely(() => {
-                        this._syncMonitorViewport();
-                        this._magnifier.scrollToMousePos();
-                    });
-                }
-            });
-        }
+        this._syncFrameHook();
     }
 
     disable() {
-        const wasAnimating = Boolean(this._timeline);
-        this._stopAnimation();
+        // Keep the user's current magnification when disabling this input tool.
+        // Never commit a stale state after an external change. Commit it before
+        // the overrides and monitor viewports are restored below: committing
+        // afterwards re-took a monitor viewport that outlived the extension.
+        if (this._timeline) {
+            this._stopAnimation();
+            if (this._magnifier?.isActive()) {
+                this._targetZoom = this._currentZoom;
+                this._runSafely(() => this._finishAnimation());
+            }
+        }
+        this._disconnectFrameHook();
         for (const [object, id] of this._connections ?? [])
             object.disconnect(id);
         this._connections = null;
         this._injections?.clear();
         this._injections = null;
         this._restoreMonitorViewports();
-
-        // Keep the user's current magnification when disabling this input tool.
-        // Never commit a stale state after an external change.
-        if (wasAnimating && this._magnifier?.isActive()) {
-            this._targetZoom = this._currentZoom;
-            this._runSafely(() => this._finishAnimation());
-        }
         this._settings = null;
         this._a11yAppSettings = null;
         this._magnifierSettings = null;
@@ -137,6 +135,43 @@ export default class SmoothPushZoomExtension extends Extension {
 
     _connect(object, signal, callback) {
         this._connections.push([object, object.connect(signal, callback)]);
+    }
+
+    _frameHookWanted() {
+        return !this._nativePointerTracking && this._lowLatencyPointer &&
+            !this._failed && Boolean(this._magnifier?.isActive());
+    }
+
+    // The responsive-pointer hook runs on every stage update, so connect it
+    // only while zoom is active. An idle per-frame JS callback still costs a
+    // call per frame, and while GJS blocks callbacks during garbage collection
+    // every stage update logs one critical message for it.
+    _syncFrameHook() {
+        if (!this._frameHookWanted()) {
+            this._disconnectFrameHook();
+        } else if (!this._frameHookId) {
+            this._frameHookId = global.stage.connect('before-update',
+                () => this._onBeforeUpdate());
+        }
+    }
+
+    _disconnectFrameHook() {
+        if (!this._frameHookId)
+            return;
+        global.stage.disconnect(this._frameHookId);
+        this._frameHookId = 0;
+    }
+
+    _onBeforeUpdate() {
+        // active-changed normally removes the hook; this covers other paths.
+        if (!this._frameHookWanted()) {
+            this._disconnectFrameHook();
+            return;
+        }
+        this._runSafely(() => {
+            this._syncMonitorViewport();
+            this._magnifier.scrollToMousePos();
+        });
     }
 
     _readSettings() {
@@ -407,9 +442,11 @@ export default class SmoothPushZoomExtension extends Extension {
             if (!this._failed && this._magnifier.isActive() &&
                 (this._monitorRegions.size > 0 || this._perMonitor))
                 this._runSafely(() => this._syncMonitorViewport());
-            if (!this._nativePointerTracking && this._lowLatencyPointer &&
-                !this._failed && this._magnifier.isActive())
+            if (this._frameHookWanted()) {
+                // No-op when connected; covers activation without active-changed.
+                this._syncFrameHook();
                 global.stage.queue_redraw();
+            }
             return Clutter.EVENT_PROPAGATE;
         }
         if (this._failed || event.type() !== Clutter.EventType.SCROLL ||
@@ -606,6 +643,7 @@ export default class SmoothPushZoomExtension extends Extension {
             if (!this._failed)
                 console.error(`[Smooth Push Zoom] ${error.stack ?? error}`);
             this._failed = true;
+            this._disconnectFrameHook();
             return false;
         }
     }

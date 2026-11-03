@@ -293,8 +293,34 @@ test('disable after an external change never overwrites the external factor', ()
 });
 test('re-enable starts with clean state and no duplicated signals', () => {
     const f = fixture(); f.extension.disable(); f.extension.enable();
-    assert(f.stage.handlers.size === 2); f.scroll(); f.settle();
-    assert(!f.extension._failed);
+    assert(f.stage.handlers.size === 1); f.scroll(); f.settle();
+    assert(!f.extension._failed && f.stage.handlers.size === 2);
+});
+test('frame hook is connected only while zoom is active', () => {
+    const f = fixture();
+    assert(f.stage.handlers.size === 1, 'idle frame hook connected');
+    f.scroll(); f.settle(); assert(f.magnifier.active && f.stage.handlers.size === 2);
+    f.scroll({direction: 2}); f.settle();
+    assert(!f.magnifier.active && f.stage.handlers.size === 1, 'frame hook survived zoom-out');
+    f.appSettings.set('screen-magnifier-enabled', true); assert(f.stage.handlers.size === 2);
+    f.appSettings.set('screen-magnifier-enabled', false); assert(f.stage.handlers.size === 1);
+    f.magnifier.setActive(true); assert(f.stage.handlers.size === 2);
+    f.settings.set('low-latency-pointer', false); assert(f.stage.handlers.size === 1);
+    f.settings.set('low-latency-pointer', true); assert(f.stage.handlers.size === 2);
+});
+test('frame hook removes itself when zoom ends without active-changed', () => {
+    const f = fixture({active: true}); assert(f.stage.handlers.size === 2);
+    f.magnifier.active = false; f.stage.emit('before-update');
+    assert(f.stage.handlers.size === 1 && f.magnifier.pointerSamples === 0);
+    f.magnifier.active = true; f.move(10, 10);
+    assert(f.stage.handlers.size === 2 && f.stage.redrawRequests === 1);
+});
+test('frame sampling failure removes the frame hook', () => {
+    const f = fixture({active: true});
+    f.magnifier.scrollToMousePos = () => { throw new Error('unsupported'); };
+    f.stage.emit('before-update');
+    assert(f.extension._failed && f.errors.length === 1 && f.stage.handlers.size === 1);
+    f.move(20, 20); assert(f.stage.handlers.size === 1 && f.stage.redrawRequests === 0);
 });
 test('paired smooth and discrete wheel events are counted only once', () => {
     const f = fixture(); f.scroll({direction: 0, dy: -1, time: 123});
@@ -398,7 +424,8 @@ test('partial native API presence retains the 46 fallback', () => {
     const f = fixture(); f.extension.disable();
     f.magnifier._getPointerPosition = () => f.pointer;
     f.extension.enable();
-    assert(!f.extension._nativePointerTracking && f.stage.handlers.size === 2);
+    assert(!f.extension._nativePointerTracking && f.stage.handlers.size === 1);
+    f.magnifier.setActive(true); assert(f.stage.handlers.size === 2);
 });
 
 
@@ -543,5 +570,15 @@ test('switching monitor mode off, unplugging and disabling restore full screen',
     const original = f.region._changeROI;
     f.extension.enable(); assert(f.region._changeROI !== original);
     f.extension.disable(); assert(f.region._changeROI === original);
+});
+test('disable during a monitor-mode animation restores full screen', () => {
+    const f = fixture({...DUAL});
+    f.pointer[0] = 2500; f.pointer[1] = 700;
+    f.scroll(); f.tick();
+    assert(f.timelines.size === 1 && !f.region.fullScreen);
+    f.extension.disable();
+    assert(f.region.fullScreen && !f.timelines.size && f.magnifier.active,
+        'monitor viewport outlived disable');
+    assert(f.stage.handlers.size === 0);
 });
 print(`${count} runtime regression checks passed (mock GNOME objects).`);

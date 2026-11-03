@@ -5,6 +5,8 @@
 - With several monitors, zoom only the monitor under the pointer (new option, on by default). The view stays inside that monitor and follows the pointer to another monitor. This avoids GNOME's whole-desktop zoom spilling across monitors and the empty-area glitches with mismatched monitor sizes.
 - Proportional mouse tracking maps the current monitor in monitor mode.
 - Monitor views are borderless and fill the monitor, including when a smaller monitor comes first in the layout.
+- Responsive pointer tracking connects its per-frame hook only while zoom is on. It is removed when zoom turns off, when the option is switched off, after a runtime error and on disable. Before, an idle hook ran on every stage update; while GNOME Shell blocked JavaScript callbacks during garbage collection, it logged one critical message per stage update (tens of thousands per second).
+- Disabling the extension during a zoom animation in monitor mode restores whole-desktop zoom instead of leaving the zoom confined to one monitor.
 
 ## 0.1.0 — 2026-10-01
 

@@ -1,5 +1,20 @@
 # Verification
 
+## November 3, 2026: frame hook only while zoomed
+
+Checked with GNOME Shell 46.0 and GJS 1.80.2.
+
+| Check | Result |
+| --- | --- |
+| `scripts/check.sh` | Passed, including 55 mock runtime checks |
+| `tests/integration.sh` | Passed: 38 checks with one monitor, 14 in each two-monitor session |
+
+New checks: no `before-update` handler is connected while zoom is off. It
+connects when zoom turns on and is removed when zoom turns off, when the
+responsive-pointer option is switched off, after a runtime error and on
+disable. Disabling during a monitor-mode zoom animation restores whole-desktop
+zoom.
+
 ## Working tree: balanced Push and camera preferences
 
 Local checks were performed on September 16, 2026 with GNOME Shell 46.0 and GJS
