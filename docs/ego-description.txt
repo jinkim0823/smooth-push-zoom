@@ -1,0 +1,18 @@
+Smooth, cursor-anchored desktop zoom for GNOME. Hold Super + Alt and scroll.
+
+Zoom glides continuously instead of jumping in steps. The content under the cursor stays put, and GNOME's mouse tracking keeps working, including Pushes Contents Around. Zoom out to 1.00× to turn Desktop Zoom off.
+
+Features
+- Smooth, proportional zoom for mouse wheels and touchpads
+- Cursor-anchored full-screen zoom
+- Equal Push margins on all four edges (0–200 px, independent of zoom level)
+- Multiple monitors: zoom only the monitor under the pointer; the zoom follows the pointer to the next monitor
+- Camera page for GNOME mouse, keyboard focus and text cursor tracking (Push, Proportional, Centered, None)
+- Adjustable shortcut, speed, smoothing and maximum zoom
+
+Notes
+- Tracking and desktop-limit controls edit shared GNOME Accessibility settings. They persist after disabling the extension.
+- Disabling the extension keeps the current zoom.
+- Tested on GNOME 46 Wayland, with one monitor and with two mismatched monitors. X11 and mixed scaling are not yet tested.
+
+Based on Deperto by Dennis Guimarães (GPL-3.0). Source, issues and changelog: https://github.com/jinkim0823/smooth-push-zoom
