@@ -6,5 +6,6 @@
     "46"
   ],
   "settings-schema": "org.gnome.shell.extensions.smooth-push-zoom",
-  "url": "https://github.com/jinkim0823/smooth-push-zoom"
+  "url": "https://github.com/jinkim0823/smooth-push-zoom",
+  "version-name": "0.2.0"
 }
