@@ -15,7 +15,7 @@ export default class SmoothPushZoomExtension extends Extension {
     enable() {
         this._connections = [];
         this._frameHookId = 0;
-        this._timeline = null;
+        this._animationId = 0;
         this._updating = false;
         this._failed = false;
         this._expectedFactor = null;
@@ -44,14 +44,14 @@ export default class SmoothPushZoomExtension extends Extension {
             this._readSettings();
             this._syncFrameHook();
             if (key === 'max-zoom') {
-                if (!this._timeline)
+                if (!this._animationId)
                     this._syncFromRuntime();
                 if (this._currentZoom > this._maxZoom || this._targetZoom > this._maxZoom) {
                     this._stopAnimation();
                     this._targetZoom = Math.min(this._currentZoom, this._maxZoom);
                     this._runSafely(() => this._finishAnimation());
                 }
-            } else if (key === 'smoothing-ms' && this._smoothingMs === 0 && this._timeline) {
+            } else if (key === 'smoothing-ms' && this._smoothingMs === 0 && this._animationId) {
                 this._runSafely(() => this._finishAnimation());
             } else if (key === 'per-monitor') {
                 this._runSafely(() => this._syncMonitorViewport(true));
@@ -108,7 +108,7 @@ export default class SmoothPushZoomExtension extends Extension {
         // Never commit a stale state after an external change. Commit it before
         // the overrides and monitor viewports are restored below: committing
         // afterwards re-took a monitor viewport that outlived the extension.
-        if (this._timeline) {
+        if (this._animationId) {
             this._stopAnimation();
             if (this._magnifier?.isActive()) {
                 this._targetZoom = this._currentZoom;
@@ -482,7 +482,7 @@ export default class SmoothPushZoomExtension extends Extension {
         }
 
         const succeeded = this._runSafely(() => {
-            if (!this._timeline)
+            if (!this._animationId)
                 this._syncFromRuntime();
             this._targetZoom = Math.max(MIN_ZOOM, Math.min(this._maxZoom,
                 this._targetZoom * Math.exp(amount * this._sensitivity)));
@@ -499,36 +499,47 @@ export default class SmoothPushZoomExtension extends Extension {
             this._finishAnimation();
             return;
         }
-        if (this._timeline)
+        if (this._animationId)
             return;
+        // Drive the interpolation from the stage's own frame cycle: a
+        // before-update handler that queues the next frame while a change is
+        // pending. Nothing is allocated, so disable() only disconnects a signal.
         this._lastFrameUs = GLib.get_monotonic_time();
-        this._timeline = new Clutter.Timeline({
-            actor: global.stage, duration: 1000, repeat_count: -1,
-        });
-        this._frameId = this._timeline.connect('new-frame', () => {
-            this._runSafely(() => {
-                const nowUs = GLib.get_monotonic_time();
-                const dtMs = Math.max(0, (nowUs - this._lastFrameUs) / 1000);
-                this._lastFrameUs = nowUs;
-                const alpha = this._smoothingMs === 0 ? 1
-                    : 1 - Math.exp(-3 * dtMs / this._smoothingMs);
-                this._currentZoom += (this._targetZoom - this._currentZoom) * alpha;
-                if (Math.abs(this._targetZoom - this._currentZoom) <= EPSILON)
-                    this._finishAnimation();
-                else
-                    this._applyZoom(this._currentZoom);
-            });
-        });
-        this._timeline.start();
+        this._animationId = global.stage.connect('before-update',
+            () => this._runSafely(() => this._animationFrame()));
+        this._requestFrame();
+    }
+
+    _requestFrame() {
+        // queue_redraw() alone schedules nothing while the unzoomed stage has
+        // no damage; ask the frame clock for an update explicitly.
+        global.stage.schedule_update();
+    }
+
+    _animationFrame() {
+        const nowUs = GLib.get_monotonic_time();
+        const dtMs = (nowUs - this._lastFrameUs) / 1000;
+        // before-update is emitted once per monitor view; advance only once
+        // per frame.
+        if (dtMs >= 1) {
+            this._lastFrameUs = nowUs;
+            const alpha = this._smoothingMs === 0 ? 1
+                : 1 - Math.exp(-3 * dtMs / this._smoothingMs);
+            this._currentZoom += (this._targetZoom - this._currentZoom) * alpha;
+            if (Math.abs(this._targetZoom - this._currentZoom) <= EPSILON) {
+                this._finishAnimation();
+                return;
+            }
+            this._applyZoom(this._currentZoom);
+        }
+        this._requestFrame();
     }
 
     _stopAnimation() {
-        if (!this._timeline)
+        if (!this._animationId)
             return;
-        this._timeline.stop();
-        this._timeline.disconnect(this._frameId);
-        this._timeline = null;
-        this._frameId = 0;
+        global.stage.disconnect(this._animationId);
+        this._animationId = 0;
     }
 
     _writeFactor(factor) {

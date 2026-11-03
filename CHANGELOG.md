@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Drive zoom interpolation from the stage frame cycle (`before-update` plus `schedule_update()`) instead of a `Clutter.Timeline`. Nothing is left to destroy on disable, which resolves the EGO-L-002 review warning.
 - With several monitors, zoom only the monitor under the pointer (new option, on by default). The view stays inside that monitor and follows the pointer to another monitor. This avoids GNOME's whole-desktop zoom spilling across monitors and the empty-area glitches with mismatched monitor sizes.
 - Proportional mouse tracking maps the current monitor in monitor mode.
 - Monitor views are borderless and fill the monitor, including when a smaller monitor comes first in the layout.

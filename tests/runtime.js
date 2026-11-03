@@ -17,7 +17,9 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
     stage: stageSize = [1280, 720], monitors = null} = {}) {
     let now = 0;
     const queue = [];
-    const timelines = new Set();
+    // The animation is a stage before-update handler; expose it as a size.
+    const timelines = {get size() { return extension?._animationId ? 1 : 0; }};
+    let extension = null;
     const errors = [];
     class Emitter {
         constructor() { this.handlers = new Map(); this.nextId = 1; }
@@ -109,15 +111,12 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
     appSettings.connect('changed::screen-magnifier-enabled', () => {
         magnifier.setActive(appSettings.get_boolean('screen-magnifier-enabled'));
     });
-    class Timeline extends Emitter {
-        constructor(properties) { super(); this.properties = properties; }
-        start() { timelines.add(this); }
-        stop() { timelines.delete(this); }
-    }
     const stage = new Emitter();
     stage.redrawRequests = 0;
     stage.queue_redraw = () => stage.redrawRequests++;
-    const Clutter = {Timeline, ModifierType: {MOD4_MASK: 1, MOD1_MASK: 2,
+    stage.updateRequests = 0;
+    stage.schedule_update = () => stage.updateRequests++;
+    const Clutter = {ModifierType: {MOD4_MASK: 1, MOD1_MASK: 2,
         CONTROL_MASK: 4, SHIFT_MASK: 8}, EventType: {SCROLL: 1, MOTION: 2},
     ScrollDirection: {SMOOTH: 0, UP: 1, DOWN: 2}, EVENT_PROPAGATE: 0, EVENT_STOP: 1};
     const Gio = {Settings: function ({schema_id}) {
@@ -137,14 +136,14 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
     const layoutManager = new Emitter();
     layoutManager.monitors = monitors ?? [{x: 0, y: 0, width: W, height: H}];
     const Klass = new Function('Clutter', 'Gio', 'GLib', 'Main', 'Extension', 'global', 'console', 'InjectionManager', 'GDesktopEnums', source);
-    const extension = new (Klass(Clutter, Gio, GLib, {magnifier, layoutManager}, Extension,
+    extension = new (Klass(Clutter, Gio, GLib, {magnifier, layoutManager}, Extension,
         {stage, get_pointer: () => pointer.map(Math.trunc), screen_width: W, screen_height: H},
         {error(message) { errors.push(message); }}, InjectionManager, GDesktopEnums))();
     extension.enable();
     function flush() { while (queue.length) queue.shift()(); }
     function tick(ms = 16) {
         now += ms * 1000;
-        for (const timeline of [...timelines]) timeline.emit('new-frame', now / 1000);
+        if (timelines.size) stage.emit('before-update');
         flush();
     }
     function scroll({direction = 1, state = 3, dy = -1, type = 1, device = 'mouse', time = now} = {}) {
@@ -580,5 +579,13 @@ test('disable during a monitor-mode animation restores full screen', () => {
     assert(f.region.fullScreen && !f.timelines.size && f.magnifier.active,
         'monitor viewport outlived disable');
     assert(f.stage.handlers.size === 0);
+});
+test('per-view before-update repeats advance the animation once per frame', () => {
+    const f = fixture(); f.scroll(); f.tick();
+    const after = f.extension._currentZoom;
+    f.stage.emit('before-update'); f.stage.emit('before-update');
+    near(f.extension._currentZoom, after);
+    const requests = f.stage.updateRequests; f.tick();
+    assert(f.extension._currentZoom > after && f.stage.updateRequests > requests);
 });
 print(`${count} runtime regression checks passed (mock GNOME objects).`);

@@ -14,7 +14,7 @@ export default class Test extends Extension {
         this._startId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
             this._startId = 0;
             this._run().then(() => this._exit(true)).catch(error => {
-                this._results.push(`FAIL: ${error.stack}`);
+                this._results.push(`FAIL: ${error.message}\n${error.stack}`);
                 this._exit(false);
             });
             return GLib.SOURCE_REMOVE;
@@ -89,7 +89,8 @@ export default class Test extends Extension {
         const tracking = region.getMouseTrackingMode();
         this._scroll();
         await this._wait(500);
-        this._assert(!zoom._failed && !zoom._timeline && Main.magnifier.isActive(), 'real Clutter timeline converges and activates magnifier');
+        this._assert(!zoom._failed && !zoom._animationId && Main.magnifier.isActive(),
+            `real frame-driven animation converges and activates magnifier (failed=${zoom._failed} animating=${zoom._animationId !== 0} active=${Main.magnifier.isActive()} zoom=${zoom._currentZoom?.toFixed(3)})`);
         const frameHook = zoom._frameHookId;
         this._assert(hooked(frameHook), 'per-frame hook connects when zoom activates');
         this._assert(Math.abs(region.getMagFactor()[0] - 1.13) < .001, 'runtime factor and persisted factor agree at 1.13x');
@@ -110,7 +111,7 @@ export default class Test extends Extension {
         await this._wait(40);
         appSettings.set_boolean('screen-magnifier-enabled', false);
         await this._wait(500);
-        this._assert(!zoom._timeline && !Main.magnifier.isActive(), 'external OFF cancels real in-flight animation');
+        this._assert(!zoom._animationId && !Main.magnifier.isActive(), 'external OFF cancels real in-flight animation');
         magSettings.set_double('mag-factor', 8);
         appSettings.set_boolean('screen-magnifier-enabled', true);
         await this._wait(150);
@@ -119,13 +120,13 @@ export default class Test extends Extension {
         this._assert(region.getMagFactor()[0] <= 2, 'lowered limit clamps real region');
         zoom._settings.set_double('smoothing-ms', 0);
         this._scroll(Clutter.ScrollDirection.DOWN);
-        this._assert(!zoom._timeline && region.getMagFactor()[0] < 2, 'zero smoothing applies immediately');
+        this._assert(!zoom._animationId && region.getMagFactor()[0] < 2, 'zero smoothing applies immediately');
         zoom._settings.set_double('smoothing-ms', 300);
         this._scroll(Clutter.ScrollDirection.DOWN);
         await this._wait(40);
         magSettings.set_double('mag-factor', 4);
         await this._wait(500);
-        this._assert(!zoom._timeline && region.getMagFactor()[0] === 4, 'external factor update wins during animation');
+        this._assert(!zoom._animationId && region.getMagFactor()[0] === 4, 'external factor update wins during animation');
         zoom._settings.set_double('max-zoom', 12);
         zoom._settings.set_double('smoothing-ms', 90);
         appSettings.set_boolean('screen-magnifier-enabled', false);
@@ -251,7 +252,7 @@ export default class Test extends Extension {
         this._captureId = 0;
         zoom.disable();
         this._assert(region._centerFromMousePosition === originalMouseCenter, 'disable restores actual native mouse method');
-        this._assert(zoom._connections === null && zoom._timeline === null && zoom._frameHookId === 0,
+        this._assert(zoom._connections === null && zoom._animationId === 0 && zoom._frameHookId === 0,
             'real extension disable releases connections');
         this._smooth = null;
     }
