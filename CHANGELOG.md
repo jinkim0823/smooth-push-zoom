@@ -2,43 +2,28 @@
 
 ## Unreleased
 
-- Split the pure geometry into `geometry.js` and simplified `extension.js`
-  (661 to about 500 lines) without changing behaviour.
-- Removed the GNOME 51 code path and the experimental GNOME 51 package. The
-  extension supports GNOME 46 only.
-- Shorter preference descriptions; removed the informational "Zoom-out endpoint" row.
+- Move the geometry into `geometry.js` and simplify `extension.js`.
+- Drop the GNOME 51 code path and the experimental 51 package.
+- Shorter preference texts.
 
 ## 0.2.0 — 2026-11-03
 
-Supports GNOME Shell 46 only.
-
-- Drive zoom interpolation from the stage frame cycle (`before-update` plus `schedule_update()`) instead of a `Clutter.Timeline`. Nothing is left to destroy on disable, which resolves the EGO-L-002 review warning.
-- With several monitors, zoom only the monitor under the pointer (new option, on by default). The view stays inside that monitor and follows the pointer to another monitor. This avoids GNOME's whole-desktop zoom spilling across monitors and the empty-area glitches with mismatched monitor sizes.
-- Proportional mouse tracking maps the current monitor in monitor mode.
-- Monitor views are borderless and fill the monitor, including when a smaller monitor comes first in the layout.
-- Responsive pointer tracking connects its per-frame hook only while zoom is on. It is removed when zoom turns off, when the option is switched off, after a runtime error and on disable. Before, an idle hook ran on every stage update; while GNOME Shell blocked JavaScript callbacks during garbage collection, it logged one critical message per stage update (tens of thousands per second).
-- Disabling the extension during a zoom animation in monitor mode restores whole-desktop zoom instead of leaving the zoom confined to one monitor.
+- Zoom only the monitor under the pointer when there are several monitors (on by default).
+- Proportional tracking follows the current monitor in that mode.
+- Animate from the stage frame clock instead of a `Clutter.Timeline`.
+- Connect the per-frame pointer hook only while zoomed. An idle hook could flood
+  the journal while GNOME Shell was blocking JavaScript callbacks.
+- Disabling during a zoom animation restores whole-desktop zoom.
 
 ## 0.1.0 — 2026-10-01
 
-First public release. Supports GNOME Shell 46 only.
+- Equal Push margins on all four edges (0–200 px), independent of zoom.
+- Camera page for GNOME's mouse, focus, caret and desktop-edge settings.
 
-- Correct asymmetric full-screen mouse Push borders with equal, zoom-independent margins.
-- Add a 0–200 logical-pixel edge margin and a switch to restore native Push.
-- Add a Camera page for shared GNOME mouse, focus, caret and desktop-boundary settings.
-- Preserve native lens and focus/caret Push behavior and restore the mouse method on disable.
-
-## 0.1.0-rc.1 — release candidate
-
-First public release candidate, based on local development builds from
-September 10–16, 2026.
+## 0.1.0-rc.1 — 2026-09-16
 
 - Smooth modifier-scroll zoom anchored at the cursor.
-- Preserve GNOME mouse tracking and fully disable zoom at 1.00×.
-- Synchronize external zoom changes and avoid double-counting paired scroll input.
-- Optional responsive pointer tracking on GNOME 46.
-- Preferences, staged installer, regression checks and isolated GNOME 46 tests.
-- GNOME 51 code path available in a separate experimental package.
-
-Only GNOME 46 is permitted by standard release metadata. Physical hardware,
-multi-monitor and GNOME 51 runtime verification remain outstanding.
+- Keep GNOME's mouse tracking; zoom out to 1.00× turns Desktop Zoom off.
+- Follow zoom changes made in GNOME settings.
+- Count a wheel tick once when Mutter sends it twice.
+- Optional per-frame pointer refresh.
