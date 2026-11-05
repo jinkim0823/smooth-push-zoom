@@ -4,6 +4,8 @@ Smooth desktop zoom for GNOME Shell 46. Hold **Super + Alt** and scroll.
 
 ![Zoom and edge-panning demo](docs/demo.gif)
 
+<sub>Rendered in a headless GNOME 46 session, not a screen recording.</sub>
+
 - The zoom follows the wheel or touchpad continuously instead of in steps.
 - The content under the cursor stays where it is while zooming.
 - GNOME's mouse tracking keeps working, including **Pushes Contents Around**.
