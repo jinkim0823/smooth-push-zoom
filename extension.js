@@ -8,8 +8,18 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import * as Geometry from './geometry.js';
+
 const MIN_ZOOM = 1.0;
 const EPSILON = 0.0015;
+
+// Setting value -> held modifiers, in the order _heldModifiers() lists them.
+const SHORTCUTS = {
+    'super-alt': 'super+alt',
+    'ctrl-super': 'super+ctrl',
+    'super': 'super',
+    'alt': 'alt',
+};
 
 export default class SmoothPushZoomExtension extends Extension {
     enable() {
@@ -18,160 +28,75 @@ export default class SmoothPushZoomExtension extends Extension {
         this._animationId = 0;
         this._updating = false;
         this._failed = false;
-        this._expectedFactor = null;
-        this._expectedEnabled = null;
+        this._ownWrites = new Map();
         this._lastSmoothEvent = null;
         this._monitorRegions = new Set();
         this._magnifier = Main.magnifier;
-        // GNOME 51 uses position-invalidated + BEFORE_REDRAW itself. Detect
-        // the implementation rather than a version number (backports exist).
-        this._nativePointerTracking =
-            typeof this._magnifier._queuePointerPositionUpdate === 'function' &&
-            typeof this._magnifier._getPointerPosition === 'function';
         this._settings = this.getSettings();
-        this._a11yAppSettings = new Gio.Settings({
-            schema_id: 'org.gnome.desktop.a11y.applications',
-        });
-        this._magnifierSettings = new Gio.Settings({
-            schema_id: 'org.gnome.desktop.a11y.magnifier',
-        });
+        this._a11yAppSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.applications'});
+        this._magnifierSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.a11y.magnifier'});
         this._readSettings();
         this._syncFromRuntime();
         this._injections = new InjectionManager();
-        this._runSafely(() => this._installPushTracking());
+        this._runSafely(() => this._installOverrides());
 
-        this._connect(this._settings, 'changed', (_settings, key) => {
-            this._readSettings();
-            this._syncFrameHook();
-            if (key === 'max-zoom') {
-                if (!this._animationId)
-                    this._syncFromRuntime();
-                if (this._currentZoom > this._maxZoom || this._targetZoom > this._maxZoom) {
-                    this._stopAnimation();
-                    this._targetZoom = Math.min(this._currentZoom, this._maxZoom);
-                    this._runSafely(() => this._finishAnimation());
-                }
-            } else if (key === 'smoothing-ms' && this._smoothingMs === 0 && this._animationId) {
-                this._runSafely(() => this._finishAnimation());
-            } else if (key === 'per-monitor') {
-                this._runSafely(() => this._syncMonitorViewport(true));
-            }
-        });
-        // GNOME's own handlers for these keys reset the viewport first;
-        // re-apply the monitor viewport afterwards when it still applies.
+        this._connect(this._settings, 'changed', (_settings, key) => this._onSettingChanged(key));
+        // GNOME resets the viewport for these first; re-apply monitor mode after it.
         for (const key of ['screen-position', 'lens-mode']) {
-            this._connect(this._magnifierSettings, `changed::${key}`, () =>
-                this._runSafely(() => this._syncMonitorViewport(true)));
+            this._connect(this._magnifierSettings, `changed::${key}`,
+                () => this._runSafely(() => this._syncMonitorViewport(true)));
         }
-        this._connect(Main.layoutManager, 'monitors-changed', () =>
-            this._runSafely(() => this._syncMonitorViewport(true)));
+        this._connect(Main.layoutManager, 'monitors-changed',
+            () => this._runSafely(() => this._syncMonitorViewport(true)));
         this._connect(this._magnifierSettings, 'changed::mag-factor', () => {
             const factor = this._magnifierSettings.get_double('mag-factor');
-            if (factor === this._expectedFactor) {
-                this._expectedFactor = null;
-                return;
-            }
-            this._expectedFactor = null;
-            if (!this._updating) {
-                this._stopAnimation();
-                this._setZoomState(this._magnifier.isActive() ? factor : MIN_ZOOM);
-            }
+            if (!this._isOwnWrite('mag-factor', factor) && !this._updating)
+                this._resetZoom(this._magnifier.isActive() ? factor : MIN_ZOOM);
         });
         this._connect(this._a11yAppSettings, 'changed::screen-magnifier-enabled', () => {
             const enabled = this._a11yAppSettings.get_boolean('screen-magnifier-enabled');
-            if (enabled === this._expectedEnabled) {
-                this._expectedEnabled = null;
-                return;
-            }
-            this._expectedEnabled = null;
-            if (!this._updating) {
-                this._stopAnimation();
-                this._setZoomState(enabled
-                    ? this._magnifierSettings.get_double('mag-factor') : MIN_ZOOM);
-            }
+            if (!this._isOwnWrite('screen-magnifier-enabled', enabled) && !this._updating)
+                this._resetZoom(enabled ? this._magnifierSettings.get_double('mag-factor') : MIN_ZOOM);
         });
         this._connect(this._magnifier, 'active-changed', () => {
-            // Also for our own activation, which runs with _updating set.
             this._syncFrameHook();
             if (!this._updating) {
                 this._stopAnimation();
                 this._syncFromRuntime();
             }
         });
-        this._connect(global.stage, 'captured-event', (_actor, event) =>
-            this._onCapturedEvent(event));
+        this._connect(global.stage, 'captured-event', (_actor, event) => this._onCapturedEvent(event));
         this._syncFrameHook();
     }
 
     disable() {
-        // Keep the user's current magnification when disabling this input tool.
-        // Never commit a stale state after an external change. Commit it before
-        // the overrides and monitor viewports are restored below: committing
-        // afterwards re-took a monitor viewport that outlived the extension.
+        // Keep the current magnification, but finish an interrupted animation
+        // while the overrides and monitor viewport are still in place.
         if (this._animationId) {
             this._stopAnimation();
-            if (this._magnifier?.isActive()) {
+            if (this._magnifier.isActive()) {
                 this._targetZoom = this._currentZoom;
                 this._runSafely(() => this._finishAnimation());
             }
         }
         this._disconnectFrameHook();
-        for (const [object, id] of this._connections ?? [])
+        for (const [object, id] of this._connections)
             object.disconnect(id);
         this._connections = null;
-        this._injections?.clear();
+        this._injections.clear();
         this._injections = null;
         this._restoreMonitorViewports();
+        this._monitorRegions = null;
+        this._ownWrites = null;
+        this._lastSmoothEvent = null;
         this._settings = null;
         this._a11yAppSettings = null;
         this._magnifierSettings = null;
         this._magnifier = null;
-        this._monitorRegions = null;
-        this._nativePointerTracking = false;
-        this._lastSmoothEvent = null;
-        this._expectedFactor = null;
-        this._expectedEnabled = null;
     }
 
     _connect(object, signal, callback) {
         this._connections.push([object, object.connect(signal, callback)]);
-    }
-
-    _frameHookWanted() {
-        return !this._nativePointerTracking && this._lowLatencyPointer &&
-            !this._failed && Boolean(this._magnifier?.isActive());
-    }
-
-    // The responsive-pointer hook runs on every stage update, so connect it
-    // only while zoom is active. An idle per-frame JS callback still costs a
-    // call per frame, and while GJS blocks callbacks during garbage collection
-    // every stage update logs one critical message for it.
-    _syncFrameHook() {
-        if (!this._frameHookWanted()) {
-            this._disconnectFrameHook();
-        } else if (!this._frameHookId) {
-            this._frameHookId = global.stage.connect('before-update',
-                () => this._onBeforeUpdate());
-        }
-    }
-
-    _disconnectFrameHook() {
-        if (!this._frameHookId)
-            return;
-        global.stage.disconnect(this._frameHookId);
-        this._frameHookId = 0;
-    }
-
-    _onBeforeUpdate() {
-        // active-changed normally removes the hook; this covers other paths.
-        if (!this._frameHookWanted()) {
-            this._disconnectFrameHook();
-            return;
-        }
-        this._runSafely(() => {
-            this._syncMonitorViewport();
-            this._magnifier.scrollToMousePos();
-        });
     }
 
     _readSettings() {
@@ -185,219 +110,246 @@ export default class SmoothPushZoomExtension extends Extension {
         this._perMonitor = this._settings.get_boolean('per-monitor');
     }
 
-    _installPushTracking() {
-        // Override only mouse tracking. GNOME's shared _centerFromPointPush()
-        // also serves focus/caret events, which must keep their native policy.
-        const prototypes = new Set(this._magnifier.getZoomRegions()
-            .map(region => Object.getPrototypeOf(region)));
-        const extension = this;
-        for (const prototype of prototypes) {
-            if (typeof prototype._centerFromMousePosition !== 'function')
-                throw new Error('Unsupported GNOME mouse tracking API');
-            this._injections.overrideMethod(prototype, '_centerFromMousePosition',
-                original => function (...args) {
-                    const mode = this._mouseTrackingMode;
-                    const Mode = GDesktopEnums.MagnifierMouseTrackingMode;
-                    if (!extension._failed && this._magnifier === extension._magnifier &&
-                        extension._isScreenFrame(this)) {
-                        let center = null;
-                        if (mode === Mode.PUSH && extension._balancedPush) {
-                            extension._runSafely(() => {
-                                center = extension._balancedPushCenter(this);
-                            });
-                        } else if (mode === Mode.PROPORTIONAL &&
-                            extension._monitorRegions.has(this)) {
-                            extension._runSafely(() => {
-                                center = extension._proportionalCenter(this);
-                            });
-                        }
-                        if (center)
-                            return center;
-                    }
-                    return original.apply(this, args);
-                });
-            if (typeof prototype._changeROI !== 'function' ||
-                typeof prototype._updateMagViewGeometry !== 'function')
-                throw new Error('Unsupported GNOME magnifier API');
-            // GNOME draws a theme-coloured border around every zoom region that
-            // is not the whole stage. A monitor viewport is full-screen from the
-            // user's point of view, so give it the borderless full-screen style.
-            this._injections.overrideMethod(prototype, '_updateMagViewGeometry',
-                original => function (...args) {
-                    original.apply(this, args);
-                    if (this._magView && extension._monitorRegions?.has(this)) {
-                        this._magView.add_style_class_name('full-screen');
-                        // The St.Bin centres its clipping group at that group's
-                        // natural size. GNOME sizes the group's background to the
-                        // first monitor, so on a larger monitor the magnified image
-                        // was offset by half the size difference. Pin it to the viewport.
-                        this._magView.get_child()?.set_size(
-                            this._viewPortWidth, this._viewPortHeight);
-                    }
-                });
-            // A monitor viewport must never show another monitor or the empty
-            // stage area beside a smaller monitor (GNOME issues 5751, 8101).
-            // This covers mouse, focus and caret tracking alike.
-            this._injections.overrideMethod(prototype, '_changeROI',
-                original => function (params = {}) {
-                    original.call(this, params);
-                    if (extension._failed || !extension._monitorRegions?.has(this))
-                        return;
-                    let clamped = null;
-                    extension._runSafely(() => {
-                        clamped = extension._clampedCenter(this);
-                    });
-                    if (clamped) {
-                        original.call(this, {
-                            xCenter: clamped[0], yCenter: clamped[1],
-                            animate: params.animate ?? false,
-                        });
-                    }
-                });
+    _onSettingChanged(key) {
+        this._readSettings();
+        this._syncFrameHook();
+        if (key === 'max-zoom') {
+            if (!this._animationId)
+                this._syncFromRuntime();
+            if (this._currentZoom > this._maxZoom || this._targetZoom > this._maxZoom) {
+                this._stopAnimation();
+                this._targetZoom = Math.min(this._currentZoom, this._maxZoom);
+                this._runSafely(() => this._finishAnimation());
+            }
+        } else if (key === 'smoothing-ms' && this._smoothingMs === 0 && this._animationId) {
+            this._runSafely(() => this._finishAnimation());
+        } else if (key === 'per-monitor') {
+            this._runSafely(() => this._syncMonitorViewport(true));
         }
     }
 
+    // GNOME 46 polls the pointer at about 60 Hz while zoomed. This hook samples
+    // it once per frame instead. It is connected only while zoom is active.
+    _frameHookWanted() {
+        return this._lowLatencyPointer && !this._failed && this._magnifier.isActive();
+    }
+
+    _syncFrameHook() {
+        if (!this._frameHookWanted())
+            this._disconnectFrameHook();
+        else if (!this._frameHookId)
+            this._frameHookId = global.stage.connect('before-update', () => this._onBeforeUpdate());
+    }
+
+    _disconnectFrameHook() {
+        if (this._frameHookId) {
+            global.stage.disconnect(this._frameHookId);
+            this._frameHookId = 0;
+        }
+    }
+
+    _onBeforeUpdate() {
+        if (!this._frameHookWanted()) {
+            this._disconnectFrameHook();
+            return;
+        }
+        this._runSafely(() => {
+            this._syncMonitorViewport();
+            this._magnifier.scrollToMousePos();
+        });
+    }
+
+    // Overrides on GNOME 46's private ZoomRegion methods. Each falls back to
+    // the original behaviour if our code throws.
+    _installOverrides() {
+        const extension = this;
+        const regions = this._magnifier.getZoomRegions();
+        for (const region of regions) {
+            for (const name of ['_centerFromMousePosition', '_changeROI', '_updateMagViewGeometry', '_isFullScreen']) {
+                if (typeof region[name] !== 'function')
+                    throw new Error(`ZoomRegion.${name} is missing`);
+            }
+            if (!Number.isFinite(region._viewPortWidth))
+                throw new Error('ZoomRegion viewport fields are missing');
+        }
+        for (const proto of new Set(regions.map(r => Object.getPrototypeOf(r)))) {
+            // Mouse tracking only: focus and caret keep GNOME's own Push.
+            this._injections.overrideMethod(proto, '_centerFromMousePosition', original => function (...args) {
+                let center = null;
+                if (this._magnifier === extension._magnifier && !extension._failed) {
+                    extension._runSafely(() => {
+                        center = extension._mouseCenter(this);
+                    });
+                }
+                return center ?? original.apply(this, args);
+            });
+
+            // Keep a monitor-mode view inside its monitor (GNOME issues 5751, 8101).
+            this._injections.overrideMethod(proto, '_changeROI', original => function (params = {}) {
+                original.call(this, params);
+                if (!extension._monitorRegions?.has(this) || extension._failed)
+                    return;
+                let center = null;
+                extension._runSafely(() => {
+                    center = Geometry.clampedCenter(this.getROI(), extension._viewPort(this));
+                });
+                if (center)
+                    original.call(this, {xCenter: center[0], yCenter: center[1], animate: params.animate ?? false});
+            });
+
+            // GNOME borders any non-full-screen region and sizes its clip group
+            // from the first monitor; a monitor view needs neither.
+            this._injections.overrideMethod(proto, '_updateMagViewGeometry', original => function (...args) {
+                original.apply(this, args);
+                if (this._magView && extension._monitorRegions?.has(this)) {
+                    this._magView.add_style_class_name('full-screen');
+                    this._magView.get_child()?.set_size(this._viewPortWidth, this._viewPortHeight);
+                }
+            });
+        }
+    }
+
+    _mouseCenter(region) {
+        if (!this._isScreenFrame(region))
+            return null;
+        const Mode = GDesktopEnums.MagnifierMouseTrackingMode;
+        const pointer = [this._magnifier.xMouse, this._magnifier.yMouse];
+        const roi = region.getROI();
+        const [factor] = region.getMagFactor();
+        if (region._mouseTrackingMode === Mode.PUSH && this._balancedPush)
+            return Geometry.balancedPushCenter(roi, factor, this._pushMargin, pointer);
+        if (region._mouseTrackingMode === Mode.PROPORTIONAL && this._monitorRegions.has(region))
+            return Geometry.proportionalCenter(this._viewPort(region), roi, factor, pointer);
+        return null;
+    }
+
+    // True for the whole stage or for a monitor this extension assigned.
     _isScreenFrame(region) {
-        // The whole stage, or the single monitor this extension assigned.
         return region._isFullScreen() || this._monitorRegions.has(region);
     }
 
     _viewPort(region) {
-        // GNOME 46/51 expose no viewport getter; keep this private access here.
-        const rect = {
-            x: region._viewPortX, y: region._viewPortY,
-            width: region._viewPortWidth, height: region._viewPortHeight,
-        };
-        if (!Object.values(rect).every(Number.isFinite))
-            throw new Error('Unsupported GNOME magnifier viewport API');
-        return rect;
+        return [region._viewPortX, region._viewPortY, region._viewPortWidth, region._viewPortHeight];
     }
 
     _screenFrame(region) {
-        return this._monitorRegions.has(region) ? this._viewPort(region)
-            : {x: 0, y: 0, width: global.screen_width, height: global.screen_height};
-    }
-
-    _clampedCenter(region) {
-        const frame = this._viewPort(region);
-        const [x, y, width, height] = region.getROI();
-        const clamp = (value, low, high) => low > high ? (low + high) / 2
-            : Math.max(low, Math.min(high, value));
-        const cx = clamp(x + width / 2, frame.x + width / 2, frame.x + frame.width - width / 2);
-        const cy = clamp(y + height / 2, frame.y + height / 2, frame.y + frame.height - height / 2);
-        if (Math.abs(cx - (x + width / 2)) < 1e-6 && Math.abs(cy - (y + height / 2)) < 1e-6)
-            return null;
-        return [cx, cy];
-    }
-
-    _proportionalCenter(region) {
-        // GNOME's proportional mode maps the whole stage onto the ROI. With a
-        // monitor viewport, map that monitor instead.
-        const frame = this._viewPort(region);
-        const [, , width, height] = region.getROI();
-        const [zx, zy] = region.getMagFactor();
-        const padding = Math.min(frame.width, frame.height) / 5;
-        const px = this._magnifier.xMouse;
-        const py = this._magnifier.yMouse;
-        const halfW = frame.width / 2;
-        const halfH = frame.height / 2;
-        return [
-            px - (px - frame.x - halfW) / halfW * (width / 2 - padding / zx),
-            py - (py - frame.y - halfH) / halfH * (height / 2 - padding / zy),
-        ];
+        return this._monitorRegions.has(region)
+            ? this._viewPort(region) : [0, 0, global.screen_width, global.screen_height];
     }
 
     _monitorModeWanted() {
-        if (!this._perMonitor || this._failed)
-            return false;
-        const monitors = Main.layoutManager.monitors ?? [];
-        return monitors.length > 1 &&
+        return this._perMonitor && !this._failed &&
+            Main.layoutManager.monitors.length > 1 &&
             this._magnifierSettings.get_enum('screen-position') ===
                 GDesktopEnums.MagnifierScreenPosition.FULL_SCREEN &&
             !this._magnifierSettings.get_boolean('lens-mode');
     }
 
-    _monitorAt(px, py) {
-        const monitors = Main.layoutManager.monitors;
-        const inside = monitors.find(m => px >= m.x && px < m.x + m.width &&
-            py >= m.y && py < m.y + m.height);
-        if (inside)
-            return inside;
-        // Pointer on a seam or outside every monitor: use the nearest one.
-        const distance = m => Math.hypot(
-            Math.max(m.x - px, 0, px - (m.x + m.width - 1)),
-            Math.max(m.y - py, 0, py - (m.y + m.height - 1)));
-        return monitors.reduce((best, m) => distance(m) < distance(best) ? m : best);
-    }
-
-    _pointer() {
-        return this._nativePointerTracking
-            ? this._magnifier._getPointerPosition() : global.get_pointer();
-    }
-
+    // Put each full-screen region on the monitor under the pointer, or give
+    // it back to GNOME when monitor mode no longer applies.
     _syncMonitorViewport(force = false) {
         const wanted = this._monitorModeWanted();
         if (!wanted && this._monitorRegions.size === 0)
             return;
-        const [px, py] = this._pointer();
+        const pointer = global.get_pointer().slice(0, 2);
+        const monitor = wanted ? Geometry.monitorAt(Main.layoutManager.monitors, ...pointer) : null;
         for (const region of this._magnifier.getZoomRegions()) {
             if (!wanted) {
                 this._restoreRegion(region);
                 continue;
             }
             const owned = this._monitorRegions.has(region);
-            // Never take over a lens or a half-screen region.
             if (!owned && !region._isFullScreen())
                 continue;
-            const monitor = this._monitorAt(px, py);
-            const current = this._viewPort(region);
-            if (owned && !force && current.x === monitor.x && current.y === monitor.y &&
-                current.width === monitor.width && current.height === monitor.height)
+            const [x, y, width, height] = this._viewPort(region);
+            if (owned && !force && x === monitor.x && y === monitor.y &&
+                width === monitor.width && height === monitor.height)
                 continue;
             this._monitorRegions.add(region);
-            region.setViewPort({x: monitor.x, y: monitor.y,
-                width: monitor.width, height: monitor.height});
+            region.setViewPort({x: monitor.x, y: monitor.y, width: monitor.width, height: monitor.height});
             if (this._magnifier.isActive()) {
-                // Entering another monitor: show the content under the pointer
-                // at the pointer's physical position, like the first zoom step.
-                const [zx, zy] = region.getMagFactor();
-                region._changeROI({
-                    xCenter: px - (px - monitor.x - monitor.width / 2) / zx,
-                    yCenter: py - (py - monitor.y - monitor.height / 2) / zy,
-                    redoCursorTracking: false,
-                    animate: false,
-                });
+                // Show what is under the pointer at its physical position.
+                const middle = [monitor.x + monitor.width / 2, monitor.y + monitor.height / 2];
+                const [cx, cy] = Geometry.anchoredCenter(pointer, middle, 1, region.getMagFactor()[0]);
+                region._changeROI({xCenter: cx, yCenter: cy, redoCursorTracking: false, animate: false});
             }
         }
     }
 
     _restoreRegion(region) {
-        if (!this._monitorRegions?.delete(region))
+        if (!this._monitorRegions.delete(region))
             return;
-        // Return to GNOME's configured screen position and natural group size.
         region._magView?.get_child()?.set_size(-1, -1);
         region.setScreenPosition(this._magnifierSettings.get_enum('screen-position'));
     }
 
     _restoreMonitorViewports() {
-        for (const region of [...this._monitorRegions ?? []])
+        for (const region of [...this._monitorRegions])
             this._runSafely(() => this._restoreRegion(region));
     }
 
-    _balancedPushCenter(region) {
-        const [x, y, width, height] = region.getROI();
-        const [zx, zy] = region.getMagFactor();
-        // Margin is in visible logical pixels, not source-desktop pixels.
-        // GNOME's native Push subtracts the cursor sprite only at right/bottom;
-        // its apparent inset grows with zoom and differs across cursor themes.
-        // Track the pointer hotspot against four equal insets instead.
-        const mx = Math.min(this._pushMargin / zx, width * 0.45);
-        const my = Math.min(this._pushMargin / zy, height * 0.45);
-        const px = this._magnifier.xMouse;
-        const py = this._magnifier.yMouse;
-        const dx = px - Math.max(x + mx, Math.min(x + width - mx, px));
-        const dy = py - Math.max(y + my, Math.min(y + height - my, py));
-        return [x + width / 2 + dx, y + height / 2 + dy];
+    _heldModifiers(state) {
+        const M = Clutter.ModifierType;
+        return [
+            [M.MOD4_MASK, 'super'],
+            [M.CONTROL_MASK, 'ctrl'],
+            [M.MOD1_MASK, 'alt'],
+            [M.SHIFT_MASK, 'shift'],
+        ].filter(([mask]) => state & mask).map(([, name]) => name).join('+');
+    }
+
+    _modifierMatches(state) {
+        return this._heldModifiers(state) === SHORTCUTS[this._modifierKey];
+    }
+
+    _onCapturedEvent(event) {
+        const type = event.type();
+        if (type === Clutter.EventType.MOTION) {
+            if (!this._failed && this._magnifier.isActive())
+                this._runSafely(() => this._syncMonitorViewport());
+            if (this._frameHookWanted()) {
+                this._syncFrameHook();
+                global.stage.queue_redraw();
+            }
+            return Clutter.EVENT_PROPAGATE;
+        }
+        if (this._failed || type !== Clutter.EventType.SCROLL || !this._modifierMatches(event.get_state()))
+            return Clutter.EVENT_PROPAGATE;
+
+        const direction = event.get_scroll_direction();
+        let amount = 0;
+        if (direction === Clutter.ScrollDirection.SMOOTH)
+            amount = -event.get_scroll_delta()[1];
+        else if (direction === Clutter.ScrollDirection.UP)
+            amount = 1;
+        else if (direction === Clutter.ScrollDirection.DOWN)
+            amount = -1;
+        if (!Number.isFinite(amount) || Math.abs(amount) < 0.0001 ||
+            this._magnifier.getZoomRegions().length === 0)
+            return Clutter.EVENT_PROPAGATE;
+
+        // A wheel tick arrives as a smooth event and a discrete one with the
+        // same device and time. Count the smooth one.
+        const device = event.get_device();
+        const time = event.get_time();
+        const sign = Math.sign(amount);
+        if (direction === Clutter.ScrollDirection.SMOOTH) {
+            this._lastSmoothEvent = {device, time, sign};
+        } else if (this._lastSmoothEvent?.device === device &&
+            this._lastSmoothEvent.time === time && this._lastSmoothEvent.sign === sign) {
+            return Clutter.EVENT_STOP;
+        }
+
+        const ok = this._runSafely(() => {
+            if (!this._animationId)
+                this._syncFromRuntime();
+            this._targetZoom = Math.max(MIN_ZOOM,
+                Math.min(this._maxZoom, this._targetZoom * Math.exp(amount * this._sensitivity)));
+            if (this._targetZoom <= MIN_ZOOM + EPSILON)
+                this._targetZoom = MIN_ZOOM;
+            this._startAnimation();
+        });
+        return ok ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
     }
 
     _setZoomState(factor) {
@@ -405,126 +357,38 @@ export default class SmoothPushZoomExtension extends Extension {
         this._targetZoom = this._currentZoom;
     }
 
+    _resetZoom(factor) {
+        this._stopAnimation();
+        this._setZoomState(factor);
+    }
+
     _syncFromRuntime() {
         const region = this._magnifier.getZoomRegions()[0];
-        this._setZoomState(this._magnifier.isActive() && region
-            ? region.getMagFactor()[0] : MIN_ZOOM);
+        this._setZoomState(this._magnifier.isActive() && region ? region.getMagFactor()[0] : MIN_ZOOM);
     }
 
-    _modifierMatches(state) {
-        const superDown = (state & Clutter.ModifierType.MOD4_MASK) !== 0;
-        const altDown = (state & Clutter.ModifierType.MOD1_MASK) !== 0;
-        const ctrlDown = (state & Clutter.ModifierType.CONTROL_MASK) !== 0;
-        const shiftDown = (state & Clutter.ModifierType.SHIFT_MASK) !== 0;
-        if (shiftDown)
-            return false;
-        switch (this._modifierKey) {
-        case 'super':
-            return superDown && !altDown && !ctrlDown;
-        case 'alt':
-            return altDown && !superDown && !ctrlDown;
-        case 'ctrl-super':
-            return ctrlDown && superDown && !altDown;
-        case 'super-alt':
-            return superDown && altDown && !ctrlDown;
-        default:
-            return false;
-        }
-    }
-
-    _onCapturedEvent(event) {
-        // GNOME 46 normally samples the magnified cursor using a ~60 Hz timer.
-        // Request a frame on pointer motion, then sample the latest position in
-        // before-update. Motion packets coalesce into frames; stationary cursors
-        // create no continuous redraw loop. Keep GNOME's poller as a fallback
-        // for grabs/input paths that do not reach this stage event handler.
-        if (event.type() === Clutter.EventType.MOTION) {
-            if (!this._failed && this._magnifier.isActive() &&
-                (this._monitorRegions.size > 0 || this._perMonitor))
-                this._runSafely(() => this._syncMonitorViewport());
-            if (this._frameHookWanted()) {
-                // No-op when connected; covers activation without active-changed.
-                this._syncFrameHook();
-                global.stage.queue_redraw();
-            }
-            return Clutter.EVENT_PROPAGATE;
-        }
-        if (this._failed || event.type() !== Clutter.EventType.SCROLL ||
-            !this._modifierMatches(event.get_state()))
-            return Clutter.EVENT_PROPAGATE;
-
-        let amount = 0;
-        const direction = event.get_scroll_direction();
-        if (direction === Clutter.ScrollDirection.SMOOTH) {
-            const [, dy] = event.get_scroll_delta();
-            amount = -dy;
-        } else if (direction === Clutter.ScrollDirection.UP) {
-            amount = 1;
-        } else if (direction === Clutter.ScrollDirection.DOWN) {
-            amount = -1;
-        }
-        // Horizontal, stop and malformed events remain available to applications.
-        if (!Number.isFinite(amount) || Math.abs(amount) < 0.0001 ||
-            this._magnifier.getZoomRegions().length === 0)
-            return Clutter.EVENT_PROPAGATE;
-
-        // Mutter 46 sends both smooth and discrete representations of a wheel
-        // tick. Prefer its fine-grained delta, but keep standalone discrete
-        // events working. Paired events share a device and timestamp.
-        const device = event.get_device();
-        const time = event.get_time();
-        if (direction === Clutter.ScrollDirection.SMOOTH) {
-            this._lastSmoothEvent = {device, time, sign: Math.sign(amount)};
-        } else if (this._lastSmoothEvent?.device === device &&
-            this._lastSmoothEvent.time === time &&
-            this._lastSmoothEvent.sign === Math.sign(amount)) {
-            return Clutter.EVENT_STOP;
-        }
-
-        const succeeded = this._runSafely(() => {
-            if (!this._animationId)
-                this._syncFromRuntime();
-            this._targetZoom = Math.max(MIN_ZOOM, Math.min(this._maxZoom,
-                this._targetZoom * Math.exp(amount * this._sensitivity)));
-            if (this._targetZoom <= MIN_ZOOM + EPSILON)
-                this._targetZoom = MIN_ZOOM;
-            this._startAnimation();
-        });
-        return succeeded ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
-    }
-
+    // The animation runs from the stage's frame cycle while a change is pending.
     _startAnimation() {
-        if (this._smoothingMs === 0 ||
-            Math.abs(this._targetZoom - this._currentZoom) <= EPSILON) {
+        if (this._smoothingMs === 0 || Math.abs(this._targetZoom - this._currentZoom) <= EPSILON) {
             this._finishAnimation();
             return;
         }
         if (this._animationId)
             return;
-        // Drive the interpolation from the stage's own frame cycle: a
-        // before-update handler that queues the next frame while a change is
-        // pending. Nothing is allocated, so disable() only disconnects a signal.
         this._lastFrameUs = GLib.get_monotonic_time();
         this._animationId = global.stage.connect('before-update',
             () => this._runSafely(() => this._animationFrame()));
-        this._requestFrame();
-    }
-
-    _requestFrame() {
-        // queue_redraw() alone schedules nothing while the unzoomed stage has
-        // no damage; ask the frame clock for an update explicitly.
+        // queue_redraw() would not schedule a frame on an undamaged stage.
         global.stage.schedule_update();
     }
 
     _animationFrame() {
-        const nowUs = GLib.get_monotonic_time();
-        const dtMs = (nowUs - this._lastFrameUs) / 1000;
-        // before-update is emitted once per monitor view; advance only once
-        // per frame.
+        const now = GLib.get_monotonic_time();
+        const dtMs = (now - this._lastFrameUs) / 1000;
+        // before-update fires once per monitor; step once per frame.
         if (dtMs >= 1) {
-            this._lastFrameUs = nowUs;
-            const alpha = this._smoothingMs === 0 ? 1
-                : 1 - Math.exp(-3 * dtMs / this._smoothingMs);
+            this._lastFrameUs = now;
+            const alpha = 1 - Math.exp(-3 * dtMs / this._smoothingMs);
             this._currentZoom += (this._targetZoom - this._currentZoom) * alpha;
             if (Math.abs(this._targetZoom - this._currentZoom) <= EPSILON) {
                 this._finishAnimation();
@@ -532,28 +396,32 @@ export default class SmoothPushZoomExtension extends Extension {
             }
             this._applyZoom(this._currentZoom);
         }
-        this._requestFrame();
+        global.stage.schedule_update();
     }
 
     _stopAnimation() {
-        if (!this._animationId)
-            return;
-        global.stage.disconnect(this._animationId);
-        this._animationId = 0;
-    }
-
-    _writeFactor(factor) {
-        if (this._magnifierSettings.get_double('mag-factor') !== factor) {
-            this._expectedFactor = factor;
-            this._magnifierSettings.set_double('mag-factor', factor);
+        if (this._animationId) {
+            global.stage.disconnect(this._animationId);
+            this._animationId = 0;
         }
     }
 
-    _writeEnabled(enabled) {
-        if (this._a11yAppSettings.get_boolean('screen-magnifier-enabled') !== enabled) {
-            this._expectedEnabled = enabled;
-            this._a11yAppSettings.set_boolean('screen-magnifier-enabled', enabled);
+    _finishAnimation() {
+        this._stopAnimation();
+        // GNOME stores mag-factor with two decimals.
+        const factor = Math.min(Math.floor(this._maxZoom * 100) / 100,
+            Math.max(MIN_ZOOM, Number(this._targetZoom.toFixed(2))));
+        this._applyZoom(factor);
+        this._setZoomState(factor);
+        this._updating = true;
+        try {
+            this._writeFactor(factor);
+            this._writeEnabled(factor > MIN_ZOOM);
+        } finally {
+            this._updating = false;
         }
+        // GNOME's own mag-factor handler re-centres the view; anchor it again.
+        this._applyZoom(factor);
     }
 
     _applyZoom(factor) {
@@ -572,9 +440,6 @@ export default class SmoothPushZoomExtension extends Extension {
             for (const region of regions)
                 this._setRegionFactor(region, factor);
             if (!this._magnifier.isActive()) {
-                // Regions already have the first factor and anchor before
-                // activation. Persist only at completion: GNOME rounds setting
-                // updates to 2 decimals, which would shift this first anchor.
                 this._writeEnabled(true);
                 this._magnifier.setActive(true);
             }
@@ -583,68 +448,50 @@ export default class SmoothPushZoomExtension extends Extension {
         }
     }
 
+    // Zoom about the cursor. setMagFactor() would add GNOME's 100 ms easing on
+    // top of ours, so set the factor and centre directly.
     _setRegionFactor(region, factor) {
-        // GNOME 46/51 setMagFactor() always adds a 100 ms easing animation.
-        // Our frame-clock interpolation must apply immediately. Keep this one
-        // private API dependency isolated; re-check it before adding Shell versions.
-        // Source: GNOME/gnome-shell, 46.0 and 51.0, js/ui/magnifier.js.
-        if (typeof region._changeROI !== 'function' ||
-            typeof region._isFullScreen !== 'function' ||
-            typeof region.getROI !== 'function' ||
-            typeof region.getMagFactor !== 'function')
-            throw new Error('Unsupported GNOME magnifier API');
-        // Zoom about the visible cursor, independently of mouse-follow policy.
-        // Keep z * (pointer - center) constant so the point under the cursor
-        // does not slide across the viewport when the factor changes.
-        // Restrict this to full-screen or monitor regions: moving lenses have
-        // their own viewport policy and must retain GNOME's native behavior.
         let anchor = {};
         if (this._isScreenFrame(region)) {
-            // GNOME 51's magnifier keeps fractional pointer coordinates;
-            // global.get_pointer() truncates them. Use the same source as its
-            // cursor actor, avoiding anchor drift under fractional scaling.
-            const [px, py] = this._pointer();
+            const pointer = global.get_pointer().slice(0, 2);
             const active = this._magnifier.isActive();
-            const [x, y, width, height] = region.getROI();
-            const [oldX, oldY] = active ? region.getMagFactor() : [1, 1];
-            // An inactive magnifier can still hold a saved, zoomed ROI.
-            // The currently visible desktop is nevertheless the unzoomed one.
-            const frame = this._screenFrame(region);
-            const cx = active ? x + width / 2 : frame.x + frame.width / 2;
-            const cy = active ? y + height / 2 : frame.y + frame.height / 2;
-            anchor = {
-                xCenter: px + (cx - px) * oldX / factor,
-                yCenter: py + (cy - py) * oldY / factor,
-                redoCursorTracking: false,
-            };
+            // An inactive region can hold a stale ROI; the visible desktop is unzoomed.
+            const [x, y, width, height] = active ? region.getROI() : this._screenFrame(region);
+            const oldFactor = active ? region.getMagFactor()[0] : 1;
+            const [cx, cy] = Geometry.anchoredCenter(pointer, [x + width / 2, y + height / 2], oldFactor, factor);
+            anchor = {xCenter: cx, yCenter: cy, redoCursorTracking: false};
         }
         region._changeROI({
-            xMagFactor: factor, yMagFactor: factor,
+            xMagFactor: factor,
+            yMagFactor: factor,
             redoCursorTracking: region._followingCursor,
             ...anchor,
             animate: false,
         });
     }
 
-    _finishAnimation() {
-        this._stopAnimation();
-        // GNOME reads mag-factor to two decimal places. Match that precision
-        // without rounding above the cap or leaving a sticky near-1x endpoint.
-        const factor = Math.min(Math.floor(this._maxZoom * 100) / 100,
-            Math.max(MIN_ZOOM, Number(this._targetZoom.toFixed(2))));
-        // Apply anchoring before GSettings can change the region's old factor.
-        this._applyZoom(factor);
-        this._setZoomState(factor);
-        this._updating = true;
-        try {
-            this._writeFactor(factor);
-            this._writeEnabled(factor > MIN_ZOOM);
-        } finally {
-            this._updating = false;
+    _writeFactor(factor) {
+        if (this._magnifierSettings.get_double('mag-factor') !== factor) {
+            this._ownWrites.set('mag-factor', factor);
+            this._magnifierSettings.set_double('mag-factor', factor);
         }
-        this._applyZoom(factor);
     }
 
+    _writeEnabled(enabled) {
+        if (this._a11yAppSettings.get_boolean('screen-magnifier-enabled') !== enabled) {
+            this._ownWrites.set('screen-magnifier-enabled', enabled);
+            this._a11yAppSettings.set_boolean('screen-magnifier-enabled', enabled);
+        }
+    }
+
+    // Tell our own GSettings writes apart from changes made elsewhere.
+    _isOwnWrite(key, value) {
+        const own = this._ownWrites.get(key) === value;
+        this._ownWrites.delete(key);
+        return own;
+    }
+
+    // On an unexpected error, log once and stop handling input until re-enabled.
     _runSafely(callback) {
         try {
             callback();

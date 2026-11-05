@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Split the pure geometry into `geometry.js` and simplified `extension.js`
+  (661 to about 500 lines) without changing behaviour.
+- Removed the GNOME 51 code path and the experimental GNOME 51 package. The
+  extension supports GNOME 46 only.
+- Shorter preference descriptions; removed the informational "Zoom-out endpoint" row.
+
 ## 0.2.0 — 2026-11-03
 
 Supports GNOME Shell 46 only.

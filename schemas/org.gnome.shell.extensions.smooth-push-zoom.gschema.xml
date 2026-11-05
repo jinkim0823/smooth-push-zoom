@@ -20,7 +20,7 @@
     <key name="low-latency-pointer" type="b">
       <default>true</default>
       <summary>Responsive magnified pointer</summary>
-      <description>Refresh magnifier tracking before rendered frames on older GNOME. GNOME 51's native event-driven tracking takes precedence; this setting has no effect there.</description>
+      <description>Update the magnified pointer position once per frame instead of GNOME's 60 Hz polling.</description>
     </key>
     <key name="modifier-key" type="s">
       <choices>

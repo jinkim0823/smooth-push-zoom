@@ -1,83 +1,65 @@
-# Architecture
+# How it works
 
-The Shell-stage captured-event handler recognizes exact modifier combinations
-and vertical scroll. Smooth/discrete pairs from the same device and timestamp
-are counted once. Horizontal-only and unmatched input propagates.
+The extension drives GNOME's own magnifier (`Main.magnifier`). It does not
+render anything itself. Pure calculations are in `geometry.js`. `extension.js`
+connects them to GNOME.
 
-Zoom targets are multiplied by `exp(delta * sensitivity)`. One Clutter timeline
-interpolates toward the target using monotonic elapsed time. Final zoom is rounded
-to GNOME's two-decimal persistence precision; settings are not written each frame.
+## Input and animation
 
-Full-screen zoom preserves `zoom * (pointer - center)` when changing the ROI
-center. Desktop bounds can override that anchor. Normal pointer movement retains
-GNOME's configured tracking policy. Non-fullscreen regions use native behavior.
+A `captured-event` handler on the stage takes vertical scroll events with the
+configured modifiers. Each event multiplies the target factor by
+`exp(delta * speed)`. Mutter 46 delivers a wheel tick twice, as a smooth event
+and as a discrete event with the same device and time. Only the smooth one is
+counted.
 
-The extension uses GNOME's magnifier, not a separate screen-capture renderer.
-The isolated private API adapter calls `ZoomRegion._changeROI()` with
-`animate: false`: `setMagFactor()` adds another 100 ms animation in the reviewed
-46.0 and 51.0 sources. `_isFullScreen()` and `_followingCursor` are also private
-dependencies. Review these contracts before adding Shell versions.
+While the current factor differs from the target, a `before-update` handler
+moves it towards the target with `1 - exp(-3 dt / smoothing)` and calls
+`stage.schedule_update()` for the next frame. The handler is disconnected when
+the target is reached. GSettings (`mag-factor`, `screen-magnifier-enabled`) is
+written only then, rounded to two decimals as GNOME stores it.
 
-On older GNOME, motion requests a frame and before-update refreshes pointer
-tracking. This keeps native polling as a fallback. On GNOME 51, paired native
-`_queuePointerPositionUpdate()` / `_getPointerPosition()` methods are detected;
-no supplemental frame hook is added, and native fractional coordinates are used.
+## Zooming about the cursor
 
-All extension signals and timelines are removed on disable. External zoom changes
-cancel interpolation. The extension does not send network requests, spawn
-processes, change mouse acceleration, or force a mouse tracking mode.
+`ZoomRegion.setMagFactor()` adds its own 100 ms easing, so the extension calls
+the private `_changeROI()` with `animate: false`. The new ROI centre keeps the
+point under the cursor fixed:
 
-## Balanced Push and native tracking preferences
+    centre' = pointer + (centre - pointer) * oldFactor / newFactor
 
-In the audited GNOME 46.0 and 51.0 `_centerFromPointPush()`, the right/bottom
-thresholds subtract the unzoomed cursor sprite width/height; left/top do not.
-Consequently this directional inset grows visually with magnification and varies
-with cursor theme. `_changeROI()` separately clamps to the desktop when
-`scroll-at-edges` is false. These are distinct boundaries.
-Reported upstream as
-[GNOME/gnome-shell#9451](https://gitlab.gnome.org/GNOME/gnome-shell/-/work_items/9451).
+## Balanced Push
 
-During enable, `InjectionManager` wraps `_centerFromMousePosition()` on the
-existing zoom-region prototypes. Only this magnifier’s full-screen mouse Push
-uses the replacement; other modes and regions call the original function. New
-regions of the same native class inherit the wrapper. Disable restores it.
-No timer or extra per-motion settings write is introduced. The shared
-`_centerFromPointPush()` function is untouched, preserving focus/caret behavior.
-
-For ROI `[x, y, w, h]` and factors `zx, zy`, inset is
-`min(margin / zx, 0.45 * w)` horizontally (likewise vertically). The center moves
-only by the pointer’s excess beyond the inset rectangle. Tracking the hotspot
-removes dependence on sprite dimensions and keeps equal visible logical-pixel
-thresholds at each zoom level. Native `_changeROI()` still applies desktop bounds.
-
-Preferences bind tracking enums and `scroll-at-edges` directly to the native
-GSettings schema. No native settings are rewritten at enable/disable; opening
-preferences only reads them. Changes are intentionally shared and persistent.
+In GNOME 46 `_centerFromPointPush()` subtracts the cursor sprite size only at
+the right and bottom edges. That margin grows with the zoom factor and depends
+on the cursor theme (GNOME#9451). The extension overrides
+`_centerFromMousePosition()` for full-screen mouse Push. The override uses the
+pointer hotspot and the same margin on all edges: `margin / factor` in desktop
+coordinates, at most 45% of the ROI. Focus and caret tracking still use GNOME's
+method.
 
 ## Monitor mode
 
-In GNOME 46.0, full-screen zoom sets the viewport to the whole stage
-(`global.screen_width × global.screen_height`). With several monitors, one
-magnified image spans all of them. With mismatched sizes, the stage also contains
-areas outside every monitor, which GNOME renders with glitches (issues 5751 and 8101).
+With two or more monitors, full-screen position and no lens, the zoom region's
+viewport is set to the monitor under the pointer with `setViewPort()`. The rest
+of the desktop is drawn normally. Three overrides support this:
 
-When `per-monitor` is on, there are at least two monitors, `screen-position` is
-`full-screen` and `lens-mode` is off, the extension calls the public
-`ZoomRegion.setViewPort()` with the geometry of the monitor under the pointer.
-That puts GNOME's region into its partial-screen path. The real desktop stays
-visible on the other monitors, and the system cursor reappears there. The
-extension records which regions it took over. The anchor, balanced Push and a
-monitor-aware proportional mapping treat such a region like a full-screen one.
+- `_changeROI()` clamps the ROI to that monitor, for mouse, focus and caret tracking.
+- `_updateMagViewGeometry()` removes the border GNOME draws around partial
+  regions. It also pins the clip group to the viewport size. GNOME sizes that
+  group from the first monitor, which offset the image on a larger monitor.
+- Proportional tracking maps the current monitor instead of the whole stage.
 
-A wrapper on `_changeROI()` clamps the ROI centre to the assigned monitor after
-every update, so mouse, focus and caret tracking cannot reveal another monitor.
-Pointer motion (the stage `captured-event`, and `before-update` on older GNOME)
-checks the monitor under the pointer. On a change, the viewport moves, and the
-content under the pointer is placed at its physical position. Changes to
-`screen-position`, `lens-mode`, the monitor layout or the option re-evaluate
-the mode. Disabling the extension, or leaving the mode, calls
-`setScreenPosition()` with GNOME's configured position. The viewport fields
-(`_viewPortX`, etc.) are read through one adapter, because GNOME provides no getter.
+When the pointer moves to another monitor, the viewport moves with it. Leaving
+monitor mode or disabling the extension calls `setScreenPosition()` with
+GNOME's configured position.
 
-Sources: [GNOME 46 magnifier](https://github.com/GNOME/gnome-shell/blob/46.0/js/ui/magnifier.js),
-[GNOME 51 magnifier](https://github.com/GNOME/gnome-shell/blob/51.0/js/ui/magnifier.js).
+## Cleanup
+
+Signals are kept in one list and disconnected in `disable()`. Method overrides
+use `InjectionManager` and are restored on disable. An unexpected error is
+logged once and the extension stops handling input until it is re-enabled.
+
+Private API used: `_changeROI`, `_centerFromMousePosition`,
+`_updateMagViewGeometry`, `_isFullScreen`, `_followingCursor`, `_mouseTrackingMode`,
+`_magView` and the `_viewPort*` fields of `ZoomRegion` in
+[magnifier.js](https://github.com/GNOME/gnome-shell/blob/46.0/js/ui/magnifier.js).
+Check these before adding a Shell version.

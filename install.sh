@@ -34,7 +34,7 @@ trap 'exit 143' TERM
 
 # Prepare and validate before touching the installed copy. Also works when this
 # script is invoked from DEST itself: all source files have already been copied.
-for file in metadata.json extension.js prefs.js README.md LICENSE NOTICE.md TESTING.md CHANGELOG.md; do
+for file in metadata.json extension.js geometry.js prefs.js README.md LICENSE NOTICE.md TESTING.md CHANGELOG.md; do
     cp -- "$SRC_DIR/$file" "$STAGING/"
 done
 mkdir -- "$STAGING/schemas"

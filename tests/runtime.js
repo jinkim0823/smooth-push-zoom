@@ -2,9 +2,12 @@
 // Run: gjs tests/runtime.js (from the project directory).
 // GNOME objects are doubles here; compositor rendering needs separate testing.
 const NativeGio = imports.gi.Gio;
-const [, bytes] = NativeGio.File.new_for_path('extension.js').load_contents(null);
-const source = new TextDecoder().decode(bytes)
+const read = path => new TextDecoder().decode(NativeGio.File.new_for_path(path).load_contents(null)[1]);
+const source = read('extension.js')
     .replace(/^import .*;\n/gm, '').replace('export default class', 'return class');
+const geometrySource = read('geometry.js');
+const Geometry = new Function(`${geometrySource.replace(/^export /gm, '')}
+    return {${[...geometrySource.matchAll(/^export function (\w+)/gm)].map(m => m[1]).join(', ')}};`)();
 
 function assert(condition, message = 'assertion failed') {
     if (!condition)
@@ -13,7 +16,7 @@ function assert(condition, message = 'assertion failed') {
 function near(actual, expected, tolerance = 1e-9) {
     assert(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 }
-function fixture({active = false, factor = 2.75, delayed = false, nativeTracking = false,
+function fixture({active = false, factor = 2.75, delayed = false,
     stage: stageSize = [1280, 720], monitors = null} = {}) {
     let now = 0;
     const queue = [];
@@ -100,10 +103,6 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         pointerSamples: 0,
         scrollToMousePos() { this.pointerSamples++; },
         getZoomRegions() { return this.regions; }});
-    if (nativeTracking) {
-        magnifier._getPointerPosition = () => pointer.slice(0, 2);
-        magnifier._queuePointerPositionUpdate = () => {};
-    }
     // Mimic GNOME's separate settings consumers, registered before the extension.
     magSettings.connect('changed::mag-factor', () => {
         region.factor = Number(magSettings.get_double('mag-factor').toFixed(2));
@@ -135,10 +134,10 @@ function fixture({active = false, factor = 2.75, delayed = false, nativeTracking
         MagnifierScreenPosition: {FULL_SCREEN: FULL}};
     const layoutManager = new Emitter();
     layoutManager.monitors = monitors ?? [{x: 0, y: 0, width: W, height: H}];
-    const Klass = new Function('Clutter', 'Gio', 'GLib', 'Main', 'Extension', 'global', 'console', 'InjectionManager', 'GDesktopEnums', source);
+    const Klass = new Function('Clutter', 'Gio', 'GLib', 'Main', 'Extension', 'global', 'console', 'InjectionManager', 'GDesktopEnums', 'Geometry', source);
     extension = new (Klass(Clutter, Gio, GLib, {magnifier, layoutManager}, Extension,
         {stage, get_pointer: () => pointer.map(Math.trunc), screen_width: W, screen_height: H},
-        {error(message) { errors.push(message); }}, InjectionManager, GDesktopEnums))();
+        {error(message) { errors.push(message); }}, InjectionManager, GDesktopEnums, Geometry))();
     extension.enable();
     function flush() { while (queue.length) queue.shift()(); }
     function tick(ms = 16) {
@@ -392,42 +391,6 @@ test('non-fullscreen lens keeps native tracking policy', () => {
     const f = fixture({active: true}); f.region.fullScreen = false; f.scroll(); f.settle();
     assert(f.region.calls.every(p => p.redoCursorTracking === true && p.xCenter === undefined));
 });
-test('51 native tracking skips extra frame hook and motion redraw', () => {
-    const f = fixture({active: true, nativeTracking: true});
-    assert(f.extension._nativePointerTracking && f.stage.handlers.size === 1);
-    f.scroll({type: 2}); f.stage.emit('before-update');
-    assert(f.stage.redrawRequests === 0 && f.magnifier.pointerSamples === 0);
-    f.settings.set('low-latency-pointer', false);
-    f.settings.set('low-latency-pointer', true);
-    f.scroll({type: 2}); assert(f.stage.redrawRequests === 0);
-});
-test('51 preserves fractional cursor anchor while legacy global truncates', () => {
-    const f = fixture({nativeTracking: true});
-    f.pointer[0] = 300.75; f.pointer[1] = 240.125;
-    f.scroll(); f.settle();
-    cursorScreen(f).forEach((v, i) => near(v, f.pointer[i]));
-    const before = cursorScreen(f); f.scroll(); f.settle();
-    cursorScreen(f).forEach((v, i) => near(v, before[i]));
-});
-test('51 external OFF and disable preserve native tracking implementation', () => {
-    const f = fixture({nativeTracking: true});
-    const nativeMethod = f.magnifier._queuePointerPositionUpdate;
-    f.scroll(); f.tick(); f.appSettings.set('screen-magnifier-enabled', false);
-    assert(!f.timelines.size && !f.magnifier.active);
-    f.extension.disable();
-    assert(f.stage.handlers.size === 0 && !f.extension._nativePointerTracking);
-    assert(f.magnifier._queuePointerPositionUpdate === nativeMethod);
-    f.extension.enable(); assert(f.extension._nativePointerTracking);
-});
-test('partial native API presence retains the 46 fallback', () => {
-    const f = fixture(); f.extension.disable();
-    f.magnifier._getPointerPosition = () => f.pointer;
-    f.extension.enable();
-    assert(!f.extension._nativePointerTracking && f.stage.handlers.size === 1);
-    f.magnifier.setActive(true); assert(f.stage.handlers.size === 2);
-});
-
-
 test('balanced push has equal visible margins at 2x and 8x', () => {
     for (const factor of [2, 8]) {
         const f = fixture({active: true, factor});
