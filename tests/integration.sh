@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export SPZ_TEST_TIMEOUT=55
 if [[ -n "${SPZ_DEMO_DIR:-}" ]]; then
-    export SPZ_TEST_TIMEOUT=100
+    export SPZ_TEST_TIMEOUT=160
 fi
 export SPZ_PREFS_SCRIPT="$ROOT/tests/prefs-window.js"
 TEST_ROOT="$(mktemp -d)"

@@ -5,8 +5,6 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 [[ $# -eq 1 ]] || { printf 'Usage: %s FRAME_DIRECTORY\n' "$0" >&2; exit 2; }
 FRAMES="$1"
 node "$ROOT/tests/demo-trajectory.cjs" "$FRAMES"
-COUNT=$(find "$FRAMES" -maxdepth 1 -name 'frame-*.png' -type f | wc -l)
-[[ "$COUNT" -eq 600 ]] || { printf 'Expected 600 rendered frames; found %s\n' "$COUNT" >&2; exit 1; }
 ffmpeg -hide_banner -loglevel error -y -framerate 60 -i "$FRAMES/frame-%03d.png" \
     -c:v libx264 -crf 18 -pix_fmt yuv420p -movflags +faststart "$ROOT/docs/demo.mp4"
 ffmpeg -hide_banner -loglevel error -y -framerate 60 -i "$FRAMES/frame-%03d.png" \

@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-11-11
 
 - Move the geometry into `geometry.js` and simplify `extension.js`.
 - Drop the GNOME 51 code path and the experimental 51 package.
 - Shorter preference texts.
+- New README demo with uneven wheel ticks and a natural mouse path.
 
 ## 0.2.0 — 2026-11-03
 
